@@ -25,6 +25,16 @@ html, body {
     background: #f8fafc;
     border-right: 1px solid #e2e8f0;
     padding: 16px;
+    display: flex;
+    flex-direction: column;
+}
+
+.panel-credits {
+    margin-top: auto;
+    padding-top: 16px;
+    font-size: 0.75rem;
+    color: #94a3b8;
+    text-align: center;
 }
 
 .panel-header h1 {
