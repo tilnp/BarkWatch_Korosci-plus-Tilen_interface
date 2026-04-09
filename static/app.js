@@ -91,7 +91,7 @@ const map = new maplibregl.Map({
                 type: 'fill',
                 source: 'odseki',
                 'source-layer': 'odsek',
-                filter: ['literal', false],
+                filter: ['==', ['get', 'odsek'], ''],
                 paint: {
                     'fill-color': '#2563eb',
                     'fill-opacity': 0.25
@@ -102,7 +102,7 @@ const map = new maplibregl.Map({
                 type: 'line',
                 source: 'odseki',
                 'source-layer': 'odsek',
-                filter: ['literal', false],
+                filter: ['==', ['get', 'odsek'], ''],
                 paint: {
                     'line-color': '#2563eb',
                     'line-width': 5,
@@ -531,21 +531,83 @@ async function fetchOdsekById(odsekId) {
     return response.json();
 }
 
+let _highlightReqId = 0;
+
+const NEVER_MATCH = ['==', ['get', 'odsek'], ''];
+
+function _applyFilter(f) {
+    if (map.getLayer('odseki-selected-fill'))    map.setFilter('odseki-selected-fill',    f);
+    if (map.getLayer('odseki-selected-outline')) map.setFilter('odseki-selected-outline', f);
+}
+
 /** Clear the highlight layers. */
 function clearHighlight() {
-    if (map.getLayer('odseki-selected-fill'))    map.setFilter('odseki-selected-fill',    ['literal', false]);
-    if (map.getLayer('odseki-selected-outline')) map.setFilter('odseki-selected-outline', ['literal', false]);
+    ++_highlightReqId;
+    _applyFilter(NEVER_MATCH);
 }
 
 /**
- * Highlight all tiles whose odsek field matches odsekId.
- * MapLibre merges tile-clipped polygons natively, so no multi-part artifacts appear.
+ * Highlight all features matching odsekId AND ggoName.
+ *
+ * Step 1 – set odsek-only filter immediately so the highlight appears as soon
+ *           as the destination tiles load (MapLibre re-evaluates filters on
+ *           every tile render).
+ * Step 2 – once the map is idle (tiles at destination are loaded), probe the
+ *           actual tile feature properties to discover which GGO field the
+ *           tiles carry (ggo_naziv, ggo, ggo_id, …) and its exact value.
+ *           Then narrow the filter to odsek AND that GGO field/value, so only
+ *           features belonging to the requested GGO stay highlighted.
  */
-function setHighlight(odsekId) {
+function setHighlight(odsekId, ggoName) {
     if (!odsekId) { clearHighlight(); return; }
-    const f = ['==', ['to-string', ['get', 'odsek']], String(odsekId)];
-    if (map.getLayer('odseki-selected-fill'))    map.setFilter('odseki-selected-fill',    f);
-    if (map.getLayer('odseki-selected-outline')) map.setFilter('odseki-selected-outline', f);
+    const reqId = ++_highlightReqId;
+
+    const odsekFilter = ['==', ['to-string', ['get', 'odsek']], String(odsekId)];
+    _applyFilter(odsekFilter);
+
+    if (!ggoName) return;
+
+    const ggoCode  = ggoCodeByName.get(ggoName) || '';
+    const normCode = normalizeCode(ggoCode);           // '07'
+
+    map.once('idle', () => {
+        if (reqId !== _highlightReqId) return; // a newer selection superseded this one
+
+        const features = map.querySourceFeatures('odseki', { sourceLayer: 'odsek' });
+
+        // Only look at features that already match the odsek ID.
+        const candidates = features.filter(
+            f => String(f.properties?.odsek ?? '') === String(odsekId)
+        );
+        if (!candidates.length) return; // tiles not loaded — keep odsek-only filter
+
+        // 1. Try GGO name fields: compare tile value against the display name.
+        for (const key of ['ggo_naziv', 'ggo_name']) {
+            const hit = candidates.find(
+                f => normalize(String(f.properties?.[key] ?? '')) === normalize(ggoName)
+            );
+            if (hit) {
+                const tileVal = String(hit.properties[key]);
+                _applyFilter(['all', odsekFilter, ['==', ['to-string', ['get', key]], tileVal]]);
+                return;
+            }
+        }
+
+        // 2. Try GGO code fields: compare normalised tile code against the GGO code.
+        for (const key of ['ggo', 'ggo_id', 'ggo_sifra', 'ggo_code']) {
+            const hit = candidates.find(f => {
+                const v = String(f.properties?.[key] ?? '');
+                return normalizeCode(v) === normCode && normCode !== '';
+            });
+            if (hit) {
+                const tileVal = String(hit.properties[key]);
+                _applyFilter(['all', odsekFilter, ['==', ['to-string', ['get', key]], tileVal]]);
+                return;
+            }
+        }
+
+        // No GGO field found in tiles — keep the odsek-only filter.
+    });
 }
 
 /**
@@ -580,7 +642,7 @@ async function selectOdsek(odsekId, source = 'panel', ggoNameOverride = null, fe
     renderDetailsTable(payload.data);
 
     // Apply the highlight filter immediately — MapLibre renders it correctly as tiles load.
-    setHighlight(cleanId);
+    setHighlight(cleanId, ggoName);
 
     const duration = source === 'panel' ? 1700 : 700;
 
@@ -725,7 +787,7 @@ map.on('click', 'odseki-fill', (event) => {
             searchInput.value = clickedOdsek;
             selectedOdsekEl.textContent = `Izbran odsek: ${clickedOdsek} | GGO: ${fallbackGgoName}`;
             renderDetailsTable(payload.data);
-            setHighlight(clickedOdsek);
+            setHighlight(clickedOdsek, fallbackGgoName);
             const bbox = getBboxFromGeometry(geometry);
             if (bbox) {
                 map.fitBounds([[bbox[0], bbox[1]], [bbox[2], bbox[3]]], { padding: 70, duration: 700, maxZoom: 14 });
