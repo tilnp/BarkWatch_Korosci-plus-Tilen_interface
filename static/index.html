@@ -21,7 +21,7 @@
             <select id="ggo-select">
                 <option value="">-- izberi GGO --</option>
             </select>
-
+    
             <label for="odsek-search">Išči po odsek ID</label>
             <div class="search-row">
                 <input id="odsek-search" type="text" placeholder="Najprej izberi GGO" autocomplete="off" disabled>
@@ -43,13 +43,27 @@
         <div id="map"></div>
 
         <div class="time-slider-overlay">
-            <div class="time-slider-title">Časovno obdobje (36 mesecev: 24 podatki + 12 napoved)</div>
+            <div class="time-slider-title">Časovno obdobje</div>
             <div class="time-slider-row">
                 <input id="month-slider" type="range" min="1" max="36" step="1" value="1">
                 <span id="month-label">Mesec 1</span>
             </div>
         </div>
     </main>
+</div>
+
+<div id="help-modal" class="help-modal hidden" role="dialog" aria-modal="true" aria-label="Navodila za uporabo">
+    <div class="help-modal-box">
+        <button id="help-close" class="help-close" aria-label="Zapri">&times;</button>
+        <h2>Navodila za uporabo</h2>
+        <ol>
+            <li><strong>Izberi GGO</strong> – iz spustnega menija izberi gozdnogospodarsko območje.</li>
+            <li><strong>Poišči odsek</strong> – v iskalno polje vnesi ID odseka in izberi predlog, ali pritisni Enter. Odsek lahko izbereš tudi s klikom na karto.</li>
+            <li><strong>Časovno obdobje</strong> – z drsnikom na vrhu strani nastavi mesec prikaza.</li>
+            <li><strong>Barve na karti</strong> – odražajo intenzivnost aktivnosti lubadarja za izbrano obdobje.</li>
+            <li><strong>Ponastavitev pogleda</strong> – gumb ⌂ (desno zgoraj) ponastavi pogled na celotno Slovenijo.</li>
+        </ol>
+    </div>
 </div>
 
 <script src="/app.js"></script>

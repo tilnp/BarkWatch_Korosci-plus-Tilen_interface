@@ -245,6 +245,85 @@ html, body {
     white-space: nowrap;
 }
 
+/* ── Custom map controls (reset, help) ─────────────────────────── */
+.map-ctrl-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 29px;
+    height: 29px;
+    background: #fff;
+    border: none;
+    cursor: pointer;
+    font-size: 1rem;
+    color: #333;
+    line-height: 1;
+    padding: 0;
+}
+
+.map-ctrl-btn:hover {
+    background: #f0f0f0;
+}
+
+/* ── Help modal ─────────────────────────────────────────────────── */
+.help-modal {
+    position: fixed;
+    inset: 0;
+    z-index: 1000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(15, 23, 42, 0.45);
+}
+
+.help-modal.hidden {
+    display: none;
+}
+
+.help-modal-box {
+    position: relative;
+    background: #fff;
+    border-radius: 12px;
+    padding: 28px 32px;
+    max-width: 480px;
+    width: 90%;
+    box-shadow: 0 12px 40px rgba(15, 23, 42, 0.25);
+}
+
+.help-modal-box h2 {
+    margin: 0 0 16px 0;
+    font-size: 1.1rem;
+}
+
+.help-modal-box ol {
+    margin: 0;
+    padding-left: 20px;
+    line-height: 1.7;
+    font-size: 0.93rem;
+    color: #1e293b;
+}
+
+.help-modal-box li {
+    margin-bottom: 6px;
+}
+
+.help-close {
+    position: absolute;
+    top: 12px;
+    right: 14px;
+    background: none;
+    border: none;
+    font-size: 1.4rem;
+    color: #64748b;
+    cursor: pointer;
+    line-height: 1;
+    padding: 2px 6px;
+}
+
+.help-close:hover {
+    color: #0f172a;
+}
+
 @media (max-width: 960px) {
     .left-panel {
         width: 360px;

@@ -50,7 +50,7 @@ const map = new maplibregl.Map({
                 type: 'raster',
                 tiles: ['https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'],
                 tileSize: 256,
-                attribution: 'Esri World Imagery'
+                attribution: '© Esri World Imagery'
             },
             odseki: {
                 type: 'vector',
@@ -119,6 +119,46 @@ const map = new maplibregl.Map({
 
 map.addControl(new maplibregl.NavigationControl(), 'top-right');
 map.addControl(new maplibregl.ScaleControl({ maxWidth: 120, unit: 'metric' }), 'bottom-right');
+
+// Reset-view control (⌂)
+map.addControl({
+    onAdd() {
+        this._container = document.createElement('div');
+        this._container.className = 'maplibregl-ctrl maplibregl-ctrl-group';
+        const btn = document.createElement('button');
+        btn.className = 'map-ctrl-btn';
+        btn.title = 'Ponastavi pogled';
+        btn.innerHTML = '⌂';
+        btn.addEventListener('click', () => {
+            map.flyTo({ center: SLOVENIA_CENTER, zoom: INITIAL_ZOOM, duration: 900 });
+        });
+        this._container.appendChild(btn);
+        return this._container;
+    },
+    onRemove() { this._container.parentNode.removeChild(this._container); }
+}, 'top-right');
+
+// Help control (?)
+const helpModal = document.getElementById('help-modal');
+document.getElementById('help-close').addEventListener('click', () => helpModal.classList.add('hidden'));
+helpModal.addEventListener('click', (e) => { if (e.target === helpModal) helpModal.classList.add('hidden'); });
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') helpModal.classList.add('hidden'); });
+
+map.addControl({
+    onAdd() {
+        this._container = document.createElement('div');
+        this._container.className = 'maplibregl-ctrl maplibregl-ctrl-group';
+        const btn = document.createElement('button');
+        btn.className = 'map-ctrl-btn';
+        btn.title = 'Navodila za uporabo';
+        btn.innerHTML = '?';
+        btn.style.fontWeight = '700';
+        btn.addEventListener('click', () => helpModal.classList.remove('hidden'));
+        this._container.appendChild(btn);
+        return this._container;
+    },
+    onRemove() { this._container.parentNode.removeChild(this._container); }
+}, 'top-right');
 
 const ggoSelect = document.getElementById('ggo-select');
 const searchInput = document.getElementById('odsek-search');
