@@ -1,3 +1,4 @@
 .venv
 data/posek_processed.csv
 data/odseki_processed.csv
+__pycache__/
