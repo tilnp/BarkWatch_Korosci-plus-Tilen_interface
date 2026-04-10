@@ -34,6 +34,7 @@
             <div class="info-block">
                 <h2>Podatki odseka</h2>
                 <div id="selected-odsek" class="selected-odsek">Ni izbranega odseka.</div>
+                <div id="posek-info" class="posek-info hidden"></div>
                 <div id="odsek-details" class="odsek-details empty">
                     Izberi odsek na karti ali preko iskalnika.
                 </div>
@@ -50,7 +51,9 @@
             <div class="time-slider-title">Časovno obdobje</div>
             <div class="time-slider-row">
                 <input id="month-slider" type="range" min="1" max="36" step="1" value="1">
+                <button id="month-prev" class="month-nav-btn" title="En mesec nazaj">&#8249;</button>
                 <span id="month-label">Mesec 1</span>
+                <button id="month-next" class="month-nav-btn" title="En mesec naprej">&#8250;</button>
             </div>
         </div>
     </main>

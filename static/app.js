@@ -211,13 +211,19 @@ const suggestionsEl = document.getElementById('suggestions');
 const selectedOdsekEl = document.getElementById('selected-odsek');
 const detailsEl = document.getElementById('odsek-details');
 const monthSlider = document.getElementById('month-slider');
-const monthLabel = document.getElementById('month-label');
+const monthLabel  = document.getElementById('month-label');
+const monthPrev   = document.getElementById('month-prev');
+const monthNext   = document.getElementById('month-next');
+const posekInfoEl = document.getElementById('posek-info');
 
 // Heatmap state (napolni initHeatmap)
 let heatmapMonths = [];
 let forecastStartMonth = '';
 const heatmapCache = new Map();
 const HEATMAP_CACHE_LIMIT = 30;
+
+// Trenutno izbran odsek (za posodabljanje poseka ob spremembi meseca)
+let selectedOdsekId = '';
 
 let suggestionsRequestCounter = 0;
 const ggoCodeByName = new Map();
@@ -348,6 +354,9 @@ function updateMonthLabel() {
     const isForecast = forecastStartMonth ? m >= forecastStartMonth : false;
     monthSlider.classList.toggle('slider-forecast', isForecast);
     monthSlider.classList.toggle('slider-historical', !isForecast);
+    const idx = Number(monthSlider.value);
+    monthPrev.disabled = idx <= Number(monthSlider.min);
+    monthNext.disabled = idx >= Number(monthSlider.max);
 }
 
 async function applyMonthColor() {
@@ -371,6 +380,48 @@ async function applyMonthColor() {
     if (map.getLayer('odseki-fill')) {
         map.setPaintProperty('odseki-fill', 'fill-color', buildHeatmapExpression(buckets));
     }
+    // Posodobi posek za trenutno izbran odsek
+    if (selectedOdsekId) {
+        fetchAndShowPosek(selectedOdsekId, m).catch(() => {});
+    }
+}
+
+async function fetchAndShowPosek(odsekId, month) {
+    if (!odsekId || !month) { posekInfoEl.classList.add('hidden'); return; }
+    try {
+        const resp = await fetch(
+            `/api/posek?odsek=${encodeURIComponent(odsekId)}&month=${encodeURIComponent(month)}`
+        );
+        if (!resp.ok) { posekInfoEl.classList.add('hidden'); return; }
+        const data = await resp.json();
+        renderPosekInfo(data, month);
+    } catch (e) {
+        posekInfoEl.classList.add('hidden');
+    }
+}
+
+function renderPosekInfo(data, month) {
+    const [year, mon] = month.split('-');
+    const SL = ['jan','feb','mar','apr','maj','jun','jul','avg','sep','okt','nov','dec'];
+    const label = `${SL[parseInt(mon,10)-1] ?? ''} ${year}`;
+
+    if (data.total_kubikov === 0) {
+        posekInfoEl.classList.remove('hidden');
+        posekInfoEl.innerHTML =
+            `<div class="posek-title">Posek — ${label}</div>` +
+            `<div class="posek-none">Ni evidentiranega poseka.</div>`;
+        return;
+    }
+
+    const rows = Object.entries(data.by_vzrok)
+        .map(([vzrok, kub]) => `<div>${vzrok}: <b>${kub.toLocaleString('sl-SI')} m³</b></div>`)
+        .join('');
+
+    posekInfoEl.classList.remove('hidden');
+    posekInfoEl.innerHTML =
+        `<div class="posek-title">Posek — ${label}</div>` +
+        `<div class="posek-total">${data.total_kubikov.toLocaleString('sl-SI')} m³</div>` +
+        `<div class="posek-breakdown">${rows}</div>`;
 }
 
 async function initHeatmap() {
@@ -674,6 +725,8 @@ function _applyFilter(f) {
 function clearHighlight() {
     ++_highlightReqId;
     _applyFilter(NEVER_MATCH);
+    selectedOdsekId = '';
+    posekInfoEl.classList.add('hidden');
 }
 
 /**
@@ -769,7 +822,9 @@ async function selectOdsek(odsekId, source = 'panel', ggoNameOverride = null, fe
     }
 
     selectedOdsekEl.textContent = `Izbran odsek: ${cleanId} | GGO: ${ggoName}`;
+    selectedOdsekId = cleanId;
     renderDetailsTable(payload.data);
+    fetchAndShowPosek(cleanId, currentMonthString()).catch(() => {});
 
     // Apply the highlight filter immediately — MapLibre renders it correctly as tiles load.
     setHighlight(cleanId, ggoName);
@@ -898,6 +953,19 @@ map.on('load', () => {
 
 let _colorDebounce = null;
 
+function stepMonth(delta) {
+    const cur = Number(monthSlider.value);
+    const next = Math.max(Number(monthSlider.min), Math.min(Number(monthSlider.max), cur + delta));
+    if (next === cur) return;
+    monthSlider.value = String(next);
+    updateMonthLabel();
+    clearTimeout(_colorDebounce);
+    applyMonthColor().catch(console.error);
+}
+
+monthPrev.addEventListener('click', () => stepMonth(-1));
+monthNext.addEventListener('click', () => stepMonth(1));
+
 monthSlider.addEventListener('input', () => {
     updateMonthLabel();
     clearTimeout(_colorDebounce);
@@ -963,7 +1031,9 @@ map.on('click', 'odseki-fill', (event) => {
             }
             searchInput.value = clickedOdsek;
             selectedOdsekEl.textContent = `Izbran odsek: ${clickedOdsek} | GGO: ${fallbackGgoName}`;
+            selectedOdsekId = clickedOdsek;
             renderDetailsTable(payload.data);
+            fetchAndShowPosek(clickedOdsek, currentMonthString()).catch(() => {});
             setHighlight(clickedOdsek, fallbackGgoName);
             const bbox = getBboxFromGeometry(geometry);
             if (bbox) {

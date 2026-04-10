@@ -49,6 +49,15 @@ GGO_CODE_TO_NAZIV = {
     14: 'SEŽANA',
 }
 
+POSEK_DATA_PATH = BASE_DIR / 'data' / 'posek_processed.csv'
+
+# Oznake vzrokov poseka
+VRSEC_LABELS = {
+    '301': 'Sanitarni posek',
+    '901': 'Redni posek',
+    '991': 'Ostalo',
+}
+
 # ── Heatmap: spremenite FORECAST_START_MONTH, da premaknete mejo med
 #             izmerjenimi podatki in napovedmi. Format: 'YYYY-MM'
 FORECAST_START_MONTH = '2025-01'
@@ -77,6 +86,9 @@ ODSEK_BBOX = {}
 HEATMAP_MONTHS = []       # sorted list of 'YYYY-MM' strings
 HEATMAP_NZ_BREAKS = []    # 3 break points for non-zero target buckets (buckets 1–4)
 HEATMAP_BY_MONTH = {}     # {leto_mesec: {odsek_id: bucket 1–4}} (only non-zero)
+
+# Posek: {odsek_id: {'YYYY-MM': {vzrok: kubikov_sum}}}
+POSEK_BY_ODSEK = {}
 
 
 # ---------------------------------------------------------------------------
@@ -454,6 +466,41 @@ def load_heatmap_data():
     )
 
 
+def load_posek_data():
+    global POSEK_BY_ODSEK
+
+    if not POSEK_DATA_PATH.exists():
+        print(f"WARNING: Posek data not found: {POSEK_DATA_PATH}")
+        return
+
+    print("Loading posek data...")
+    _configure_csv_field_limit()
+
+    tmp = defaultdict(lambda: defaultdict(lambda: defaultdict(float)))
+    # tmp[odsek_id]['YYYY-MM'][vzrok] += kubikov
+
+    with POSEK_DATA_PATH.open('r', encoding='utf-8', newline='') as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            odsek = (row.get('odsek') or '').strip()
+            if not odsek:
+                continue
+            try:
+                leto  = int(row.get('leto',  0))
+                mesec = int(row.get('mesec', 0))
+                kub   = float(row.get('kubikov', 0) or 0)
+            except ValueError:
+                continue
+            if not leto or not mesec:
+                continue
+            month_key = f"{leto}-{mesec:02d}"
+            vzrok = (row.get('vrsec') or '').strip()
+            tmp[odsek][month_key][vzrok] += kub
+
+    POSEK_BY_ODSEK = {odsek: dict(months) for odsek, months in tmp.items()}
+    print(f"Posek loaded: {len(POSEK_BY_ODSEK)} odseki")
+
+
 def _sanitize_static_path(request_path):
     rel = request_path.lstrip('/') or 'index.html'
     full = (STATIC_DIR / rel).resolve()
@@ -557,6 +604,28 @@ class TileHandler(BaseHTTPRequestHandler):
                 'columns': ODSEKI_FIELDS,
                 'data': record,
                 'bbox': bbox  # [west, south, east, north] or null
+            })
+            return
+
+        if path == '/api/posek':
+            query_map = parse_qs(parsed.query)
+            odsek_id = query_map.get('odsek', [''])[0].strip()
+            month    = query_map.get('month', [''])[0].strip()
+            if not odsek_id or not month:
+                self._send_json(400, {'error': 'Missing odsek or month'})
+                return
+            odsek_data = POSEK_BY_ODSEK.get(odsek_id, {})
+            by_vzrok_raw = odsek_data.get(month, {})
+            total = sum(by_vzrok_raw.values())
+            by_vzrok = {
+                VRSEC_LABELS.get(k, f'Vzrok {k}'): round(v, 2)
+                for k, v in sorted(by_vzrok_raw.items())
+            }
+            self._send_json(200, {
+                'odsek': odsek_id,
+                'month': month,
+                'total_kubikov': round(total, 2),
+                'by_vzrok': by_vzrok,
             })
             return
 
@@ -711,6 +780,7 @@ def main():
 
     load_odseki_data()
     load_heatmap_data()
+    load_posek_data()
 
     global ODSEK_BBOX
     ODSEK_BBOX = _load_or_build_bbox_index(MBTILES_FILE, zoom=11)
