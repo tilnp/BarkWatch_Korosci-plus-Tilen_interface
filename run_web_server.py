@@ -12,6 +12,7 @@ from http.server import HTTPServer, BaseHTTPRequestHandler
 
 MBTILES_FILE = 'data/odseki_vector_map.mbtiles'
 GGO_MBTILES_FILE = 'data/ggo_vector_map.mbtiles'
+SLO_MBTILES_FILE = 'data/slovenija_vector_map.mbtiles'
 PORT = 8000
 
 import csv
@@ -686,6 +687,52 @@ class TileHandler(BaseHTTPRequestHandler):
                 ]
             })
             return
+
+        if path.startswith('/slo-tiles/'):
+            parts = path.strip('/').split('/')
+            if len(parts) == 4:
+                try:
+                    _, z, x, y = parts
+                    y_base = y.split('.')[0]
+                    z, x, y = int(z), int(x), int(y_base)
+                    y_tms = (2 ** z - 1) - y
+
+                    conn = sqlite3.connect(SLO_MBTILES_FILE)
+                    try:
+                        cursor = conn.cursor()
+                        cursor.execute(
+                            'SELECT tile_data FROM tiles WHERE zoom_level=? AND tile_column=? AND tile_row=?',
+                            (z, x, y_tms)
+                        )
+                        row = cursor.fetchone()
+                    finally:
+                        conn.close()
+
+                    if row:
+                        tile_data = row[0]
+                        self.send_response(200)
+                        self.send_header('Content-Type', 'application/vnd.mapbox-vector-tile')
+                        if tile_data[:2] == b'\x1f\x8b':
+                            self.send_header('Content-Encoding', 'gzip')
+                        self.send_header('Access-Control-Allow-Origin', '*')
+                        self.end_headers()
+                        try:
+                            self.wfile.write(tile_data)
+                        except BrokenPipeError:
+                            return
+                    else:
+                        self.send_response(204)
+                        self.end_headers()
+                    return
+                except BrokenPipeError:
+                    return
+                except Exception:
+                    try:
+                        self.send_response(500)
+                        self.end_headers()
+                    except BrokenPipeError:
+                        pass
+                    return
 
         if path.startswith('/ggo-tiles/'):
             parts = path.strip('/').split('/')

@@ -57,6 +57,12 @@ const map = new maplibregl.Map({
                 tiles: [`${window.location.origin}/ggo-tiles/{z}/{x}/{y}`],
                 minzoom: 0,
                 maxzoom: 14
+            },
+            slovenija: {
+                type: 'vector',
+                tiles: [`${window.location.origin}/slo-tiles/{z}/{x}/{y}`],
+                minzoom: 0,
+                maxzoom: 14
             }
         },
         layers: [
@@ -85,6 +91,17 @@ const map = new maplibregl.Map({
                     'line-color': '#111827',
                     'line-width': 0.6,
                     'line-opacity': 0.75
+                }
+            },
+            {
+                id: 'slovenija-outline',
+                type: 'line',
+                source: 'slovenija',
+                'source-layer': 'meja_maps',
+                paint: {
+                    'line-color': '#60cdeeff',
+                    'line-width': 2,
+                    'line-opacity': 0.8
                 }
             },
             {
