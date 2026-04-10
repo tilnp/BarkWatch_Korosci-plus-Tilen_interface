@@ -944,9 +944,11 @@ suggestionsEl.addEventListener('click', (event) => {
     });
 });
 
+// Fiksne meje malce izven Slovenije — neodvisno od velikosti okna ob zagonu
+const SLOVENIA_MAX_BOUNDS = [[12.0, 44.8], [17.8, 47.5]];
+
 map.on('load', () => {
-    const initialBounds = map.getBounds();
-    map.setMaxBounds(initialBounds);
+    map.setMaxBounds(SLOVENIA_MAX_BOUNDS);
 
     initHeatmap().catch(console.error);
 });
