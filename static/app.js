@@ -29,11 +29,24 @@ const FIELD_LABELS = {
 
 const DISPLAY_FIELDS = Object.keys(FIELD_LABELS);
 
+// Prikaz razčlenitve poseka po kategorijah (true) ali samo skupna količina (false)
+const SHOW_ADVANCED_POSEK = false;
+
 // Barvna lestvica za heatmap: bucket 0 (ni aktivnosti) → bucket 4 (visoka aktivnost)
-const HEATMAP_COLORS = ['#22c55e', '#84cc16', '#facc15', '#f97316', '#ef4444'];
-const HEATMAP_DEFAULT_COLOR = '#334155';
+// Barve so definirane v :root (styles.css) — tukaj jih samo preberemo
+const HEATMAP_COLORS = [0, 1, 2, 3, 4].map(i =>
+    getComputedStyle(document.documentElement).getPropertyValue(`--color-heatmap-${i}`).trim()
+);
+const HEATMAP_DEFAULT_COLOR = getComputedStyle(document.documentElement).getPropertyValue('--color-heatmap-none').trim();
 
 const TILE_URL = `${window.location.origin}/tiles/{z}/{x}/{y}`;
+
+// Barve iz CSS spremenljivk — definirane enkrat v :root (styles.css)
+const _css = getComputedStyle(document.documentElement);
+const COLOR_SLO_OUTLINE   = _css.getPropertyValue('--color-slo-outline').trim();
+const COLOR_GGO_OUTLINE   = _css.getPropertyValue('--color-ggo-outline').trim();
+const COLOR_ODSEKI_FILL   = _css.getPropertyValue('--color-odseki-fill').trim();
+const COLOR_ODSEKI_BORDER = _css.getPropertyValue('--color-odseki-border').trim();
 
 const map = new maplibregl.Map({
     container: 'map',
@@ -77,7 +90,7 @@ const map = new maplibregl.Map({
                 source: 'odseki',
                 'source-layer': 'odsek',
                 paint: {
-                    'fill-color': '#045010',
+                    'fill-color': COLOR_ODSEKI_FILL,
                     'fill-color-transition': { duration: 0, delay: 0 },
                     'fill-opacity': 0.45
                 }
@@ -88,7 +101,7 @@ const map = new maplibregl.Map({
                 source: 'odseki',
                 'source-layer': 'odsek',
                 paint: {
-                    'line-color': '#111827',
+                    'line-color': COLOR_ODSEKI_BORDER,
                     'line-width': 0.6,
                     'line-opacity': 0.75
                 }
@@ -99,7 +112,7 @@ const map = new maplibregl.Map({
                 source: 'slovenija',
                 'source-layer': 'meja_maps',
                 paint: {
-                    'line-color': '#60cdeeff',
+                    'line-color': COLOR_SLO_OUTLINE,
                     'line-width': 2,
                     'line-opacity': 0.8
                 }
@@ -110,7 +123,7 @@ const map = new maplibregl.Map({
                 source: 'ggo',
                 'source-layer': 'ggo_maps',
                 paint: {
-                    'line-color': '#4ade80',
+                    'line-color': COLOR_GGO_OUTLINE,
                     'line-width': 2.5,
                     'line-opacity': 0.65,
                     'line-blur': 1.5
@@ -206,6 +219,16 @@ map.addControl({
 const legendBtn   = document.getElementById('legend-btn');
 const legendPanel = document.getElementById('legend-panel');
 legendBtn.addEventListener('click', () => legendPanel.classList.toggle('hidden'));
+
+// Checkboxi za toggle mejnih layerjev
+[
+    { id: 'toggle-slo-outline', layer: 'slovenija-outline' },
+    { id: 'toggle-ggo-outline', layer: 'ggo-outline' },
+].forEach(({ id, layer }) => {
+    document.getElementById(id).addEventListener('change', function () {
+        map.setLayoutProperty(layer, 'visibility', this.checked ? 'visible' : 'none');
+    });
+});
 
 // Help control (?) — added last so it appears at the bottom of the control stack
 const helpModal = document.getElementById('help-modal');
@@ -438,15 +461,19 @@ function renderPosekInfo(data, month) {
         return;
     }
 
-    const rows = Object.entries(data.by_vzrok)
-        .map(([vzrok, kub]) => `<div>${vzrok}: <b>${kub.toLocaleString('sl-SI')} m³</b></div>`)
-        .join('');
+    const breakdown = SHOW_ADVANCED_POSEK
+        ? `<div class="posek-breakdown">${
+            Object.entries(data.by_vzrok)
+                .map(([vzrok, kub]) => `<div>${vzrok}: <b>${kub.toLocaleString('sl-SI')} m³</b></div>`)
+                .join('')
+          }</div>`
+        : '';
 
     posekInfoEl.classList.remove('hidden');
     posekInfoEl.innerHTML =
         `<div class="posek-title">Posek — ${label}</div>` +
         `<div class="posek-total">${data.total_kubikov.toLocaleString('sl-SI')} m³</div>` +
-        `<div class="posek-breakdown">${rows}</div>`;
+        breakdown;
 }
 
 async function initHeatmap() {

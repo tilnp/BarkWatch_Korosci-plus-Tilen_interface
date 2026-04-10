@@ -52,23 +52,31 @@
             <div id="legend-panel" class="legend-panel hidden">
                 <div class="legend-section-title">Aktivnost podlubnika</div>
                 <div class="legend-rows">
-                    <div class="legend-row"><span class="legend-swatch" style="background:#22c55e"></span>Brez aktivnosti</div>
-                    <div class="legend-row"><span class="legend-swatch" style="background:#84cc16"></span>Nizka</div>
-                    <div class="legend-row"><span class="legend-swatch" style="background:#facc15"></span>Srednja</div>
-                    <div class="legend-row"><span class="legend-swatch" style="background:#f97316"></span>Visoka</div>
-                    <div class="legend-row"><span class="legend-swatch" style="background:#ef4444"></span>Zelo visoka</div>
+                    <div class="legend-row"><span class="legend-swatch" style="background:var(--color-heatmap-0)"></span>Brez aktivnosti</div>
+                    <div class="legend-row"><span class="legend-swatch" style="background:var(--color-heatmap-1)"></span>Nizka</div>
+                    <div class="legend-row"><span class="legend-swatch" style="background:var(--color-heatmap-2)"></span>Srednja</div>
+                    <div class="legend-row"><span class="legend-swatch" style="background:var(--color-heatmap-3)"></span>Visoka</div>
+                    <div class="legend-row"><span class="legend-swatch" style="background:var(--color-heatmap-4)"></span>Zelo visoka</div>
                 </div>
                 <div class="legend-divider"></div>
                 <div class="legend-section-title">Časovno obdobje</div>
                 <div class="legend-rows">
-                    <div class="legend-row"><span class="legend-swatch legend-swatch-round" style="background:#2563eb"></span>Izmerjeni podatki</div>
-                    <div class="legend-row"><span class="legend-swatch legend-swatch-round" style="background:#f97316"></span>Napovedi</div>
+                    <div class="legend-row"><span class="legend-swatch legend-swatch-round" style="background:var(--color-measured)"></span>Izmerjeni podatki</div>
+                    <div class="legend-row"><span class="legend-swatch legend-swatch-round" style="background:var(--color-forecast)"></span>Napovedi</div>
                 </div>
                 <div class="legend-divider"></div>
                 <div class="legend-section-title">Meje</div>
                 <div class="legend-rows">
-                    <div class="legend-row"><span class="legend-swatch legend-swatch-line" style="background:#60cdeeff"></span>Meja Slovenije</div>
-                    <div class="legend-row"><span class="legend-swatch legend-swatch-line" style="background:#4ade80"></span>Meja GGO</div>
+                    <div class="legend-row">
+                        <span class="legend-swatch legend-swatch-line" style="background:var(--color-slo-outline)"></span>
+                        Meja Slovenije
+                        <input type="checkbox" id="toggle-slo-outline" class="legend-row-toggle" checked>
+                    </div>
+                    <div class="legend-row">
+                        <span class="legend-swatch legend-swatch-line" style="background:var(--color-ggo-outline)"></span>
+                        Meja GGO
+                        <input type="checkbox" id="toggle-ggo-outline" class="legend-row-toggle" checked>
+                    </div>
                 </div>
             </div>
         </div>

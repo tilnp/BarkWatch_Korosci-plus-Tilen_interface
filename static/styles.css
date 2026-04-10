@@ -1,3 +1,25 @@
+:root {
+    /* ── Heatmap aktivnosti (bucket 0–4) ───────────────────────────── */
+    --color-heatmap-0:      #22c55e;
+    --color-heatmap-1:      #84cc16;
+    --color-heatmap-2:      #facc15;
+    --color-heatmap-3:      #f97316;
+    --color-heatmap-4:      #ef4444;
+    --color-heatmap-none:   #334155;
+
+    /* ── Časovno obdobje ───────────────────────────────────────────── */
+    --color-measured:       #2563eb;
+    --color-forecast:       #f97316;
+
+    /* ── Barve mejnih layerjev ─────────────────────────────────────── */
+    --color-slo-outline:    #60cdee;
+    --color-ggo-outline:    #4ade80;
+
+    /* ── Barve odsekov ─────────────────────────────────────────────── */
+    --color-odseki-fill:    #045010;
+    --color-odseki-border:  #111827;
+}
+
 * {
     box-sizing: border-box;
 }
@@ -419,6 +441,15 @@ html, body {
     border-radius: 2px;
     border: none;
     align-self: center;
+}
+
+.legend-row-toggle {
+    margin: 0 0 0 auto;
+    width: 14px;
+    height: 14px;
+    cursor: pointer;
+    accent-color: #2563eb;
+    flex-shrink: 0;
 }
 
 .legend-divider {
