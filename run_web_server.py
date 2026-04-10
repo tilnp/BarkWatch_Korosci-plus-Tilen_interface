@@ -10,7 +10,7 @@ import os
 import sys
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
-MBTILES_FILE = 'data/odseki_map_vector_final_brezZ.mbtiles'
+MBTILES_FILE = 'data/odseki_vector_map.mbtiles'
 PORT = 8000
 
 import csv

@@ -182,6 +182,11 @@ map.addControl({
     onRemove() { this._container.parentNode.removeChild(this._container); }
 }, 'top-right');
 
+// Legenda toggle
+const legendBtn   = document.getElementById('legend-btn');
+const legendPanel = document.getElementById('legend-panel');
+legendBtn.addEventListener('click', () => legendPanel.classList.toggle('hidden'));
+
 // Help control (?) — added last so it appears at the bottom of the control stack
 const helpModal = document.getElementById('help-modal');
 document.getElementById('help-close').addEventListener('click', () => helpModal.classList.add('hidden'));
