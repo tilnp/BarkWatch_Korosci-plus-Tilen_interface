@@ -517,6 +517,48 @@ class TileHandler(BaseHTTPRequestHandler):
     def log_message(self, format, *args):
         pass
 
+    def _serve_mbtiles_tile(self, mbtiles_file, path):
+        parts = path.strip('/').split('/')
+        if len(parts) != 4:
+            return
+        try:
+            _, z, x, y = parts
+            z, x, y = int(z), int(x), int(y.split('.')[0])
+            y_tms = (2 ** z - 1) - y
+            conn = sqlite3.connect(mbtiles_file)
+            try:
+                cursor = conn.cursor()
+                cursor.execute(
+                    'SELECT tile_data FROM tiles WHERE zoom_level=? AND tile_column=? AND tile_row=?',
+                    (z, x, y_tms)
+                )
+                row = cursor.fetchone()
+            finally:
+                conn.close()
+            if row:
+                tile_data = row[0]
+                self.send_response(200)
+                self.send_header('Content-Type', 'application/vnd.mapbox-vector-tile')
+                if tile_data[:2] == b'\x1f\x8b':
+                    self.send_header('Content-Encoding', 'gzip')
+                self.send_header('Access-Control-Allow-Origin', '*')
+                self.end_headers()
+                try:
+                    self.wfile.write(tile_data)
+                except BrokenPipeError:
+                    pass
+            else:
+                self.send_response(204)
+                self.end_headers()
+        except BrokenPipeError:
+            pass
+        except Exception:
+            try:
+                self.send_response(500)
+                self.end_headers()
+            except BrokenPipeError:
+                pass
+
     def _send_json(self, status_code, payload):
         body = json.dumps(payload, ensure_ascii=False).encode('utf-8')
         self.send_response(status_code)
@@ -689,142 +731,16 @@ class TileHandler(BaseHTTPRequestHandler):
             return
 
         if path.startswith('/slo-tiles/'):
-            parts = path.strip('/').split('/')
-            if len(parts) == 4:
-                try:
-                    _, z, x, y = parts
-                    y_base = y.split('.')[0]
-                    z, x, y = int(z), int(x), int(y_base)
-                    y_tms = (2 ** z - 1) - y
-
-                    conn = sqlite3.connect(SLO_MBTILES_FILE)
-                    try:
-                        cursor = conn.cursor()
-                        cursor.execute(
-                            'SELECT tile_data FROM tiles WHERE zoom_level=? AND tile_column=? AND tile_row=?',
-                            (z, x, y_tms)
-                        )
-                        row = cursor.fetchone()
-                    finally:
-                        conn.close()
-
-                    if row:
-                        tile_data = row[0]
-                        self.send_response(200)
-                        self.send_header('Content-Type', 'application/vnd.mapbox-vector-tile')
-                        if tile_data[:2] == b'\x1f\x8b':
-                            self.send_header('Content-Encoding', 'gzip')
-                        self.send_header('Access-Control-Allow-Origin', '*')
-                        self.end_headers()
-                        try:
-                            self.wfile.write(tile_data)
-                        except BrokenPipeError:
-                            return
-                    else:
-                        self.send_response(204)
-                        self.end_headers()
-                    return
-                except BrokenPipeError:
-                    return
-                except Exception:
-                    try:
-                        self.send_response(500)
-                        self.end_headers()
-                    except BrokenPipeError:
-                        pass
-                    return
+            self._serve_mbtiles_tile(SLO_MBTILES_FILE, path)
+            return
 
         if path.startswith('/ggo-tiles/'):
-            parts = path.strip('/').split('/')
-            if len(parts) == 4:
-                try:
-                    _, z, x, y = parts
-                    y_base = y.split('.')[0]
-                    z, x, y = int(z), int(x), int(y_base)
-                    y_tms = (2 ** z - 1) - y
-
-                    conn = sqlite3.connect(GGO_MBTILES_FILE)
-                    try:
-                        cursor = conn.cursor()
-                        cursor.execute(
-                            'SELECT tile_data FROM tiles WHERE zoom_level=? AND tile_column=? AND tile_row=?',
-                            (z, x, y_tms)
-                        )
-                        row = cursor.fetchone()
-                    finally:
-                        conn.close()
-
-                    if row:
-                        tile_data = row[0]
-                        self.send_response(200)
-                        self.send_header('Content-Type', 'application/vnd.mapbox-vector-tile')
-                        if tile_data[:2] == b'\x1f\x8b':
-                            self.send_header('Content-Encoding', 'gzip')
-                        self.send_header('Access-Control-Allow-Origin', '*')
-                        self.end_headers()
-                        try:
-                            self.wfile.write(tile_data)
-                        except BrokenPipeError:
-                            return
-                    else:
-                        self.send_response(204)
-                        self.end_headers()
-                    return
-                except BrokenPipeError:
-                    return
-                except Exception:
-                    try:
-                        self.send_response(500)
-                        self.end_headers()
-                    except BrokenPipeError:
-                        pass
-                    return
+            self._serve_mbtiles_tile(GGO_MBTILES_FILE, path)
+            return
 
         if path.startswith('/tiles/'):
-            parts = path.strip('/').split('/')
-            if len(parts) == 4:
-                try:
-                    _, z, x, y = parts
-                    y_base = y.split('.')[0]  # supports /tiles/z/x/y.pbf
-                    z, x, y = int(z), int(x), int(y_base)
-                    y_tms = (2 ** z - 1) - y
-
-                    conn = sqlite3.connect(MBTILES_FILE)
-                    try:
-                        cursor = conn.cursor()
-                        cursor.execute(
-                            'SELECT tile_data FROM tiles WHERE zoom_level=? AND tile_column=? AND tile_row=?',
-                            (z, x, y_tms)
-                        )
-                        row = cursor.fetchone()
-                    finally:
-                        conn.close()
-
-                    if row:
-                        tile_data = row[0]
-                        self.send_response(200)
-                        self.send_header('Content-Type', 'application/vnd.mapbox-vector-tile')
-                        if tile_data[:2] == b'\x1f\x8b':
-                            self.send_header('Content-Encoding', 'gzip')
-                        self.send_header('Access-Control-Allow-Origin', '*')
-                        self.end_headers()
-                        try:
-                            self.wfile.write(tile_data)
-                        except BrokenPipeError:
-                            return
-                    else:
-                        self.send_response(204)
-                        self.end_headers()
-                    return
-                except BrokenPipeError:
-                    return
-                except Exception:
-                    try:
-                        self.send_response(500)
-                        self.end_headers()
-                    except BrokenPipeError:
-                        pass
-                    return
+            self._serve_mbtiles_tile(MBTILES_FILE, path)
+            return
 
         self._serve_static_file(path)
 

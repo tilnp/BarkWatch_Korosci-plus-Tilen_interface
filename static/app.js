@@ -38,8 +38,7 @@ const TILE_URL = `${window.location.origin}/tiles/{z}/{x}/{y}`;
 
 // Barve iz CSS spremenljivk — definirane enkrat v :root (styles.css)
 const _css = getComputedStyle(document.documentElement);
-const HEATMAP_COLORS      = [0, 1, 2, 3, 4].map(i => _css.getPropertyValue(`--color-heatmap-${i}`).trim());
-const HEATMAP_DEFAULT_COLOR = _css.getPropertyValue('--color-heatmap-none').trim();
+const HEATMAP_COLORS = [0, 1, 2, 3, 4].map(i => _css.getPropertyValue(`--color-heatmap-${i}`).trim());
 const COLOR_SLO_OUTLINE   = _css.getPropertyValue('--color-slo-outline').trim();
 const COLOR_GGO_OUTLINE   = _css.getPropertyValue('--color-ggo-outline').trim();
 const COLOR_ODSEKI_FILL   = _css.getPropertyValue('--color-odseki-fill').trim();
