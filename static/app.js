@@ -29,9 +29,6 @@ const FIELD_LABELS = {
 
 const DISPLAY_FIELDS = Object.keys(FIELD_LABELS);
 
-// Prikaz razčlenitve poseka po kategorijah (true) ali samo skupna količina (false)
-const SHOW_ADVANCED_POSEK = false;
-
 const HIGHLIGHT_SELECTED_ODSEK_BACKGROUND = false;
 
 const TILE_URL = `${window.location.origin}/tiles/{z}/{x}/{y}`;
@@ -258,7 +255,7 @@ const monthSlider = document.getElementById('month-slider');
 const monthLabel  = document.getElementById('month-label');
 const monthPrev   = document.getElementById('month-prev');
 const monthNext   = document.getElementById('month-next');
-const posekInfoEl = document.getElementById('posek-info');
+const heatmapInfoEl = document.getElementById('posek-info');
 
 // Heatmap state (napolni initHeatmap)
 let heatmapMonths = [];
@@ -383,51 +380,50 @@ async function applyMonthColor() {
     if (map.getLayer('odseki-fill')) {
         map.setPaintProperty('odseki-fill', 'fill-color', buildHeatmapExpression(buckets));
     }
-    // Posodobi posek za trenutno izbran odsek
     if (selectedOdsekId) {
-        fetchAndShowPosek(selectedOdsekId, m).catch(() => {});
+        fetchAndShowHeatmapValue(selectedOdsekId, m, selectedGgoName()).catch(() => {});
     }
 }
 
-async function fetchAndShowPosek(odsekId, month) {
-    if (!odsekId || !month) { posekInfoEl.classList.add('hidden'); return; }
+async function fetchAndShowHeatmapValue(odsekId, month, ggoName = '') {
+    if (!odsekId || !month) { heatmapInfoEl.classList.add('hidden'); return; }
     try {
+        const ggoParam = ggoName ? `&ggo=${encodeURIComponent(ggoName)}` : '';
         const resp = await fetch(
-            `/api/posek?odsek=${encodeURIComponent(odsekId)}&month=${encodeURIComponent(month)}`
+            `/api/heatmap/value?odsek=${encodeURIComponent(odsekId)}&month=${encodeURIComponent(month)}${ggoParam}`
         );
-        if (!resp.ok) { posekInfoEl.classList.add('hidden'); return; }
+        if (!resp.ok) { heatmapInfoEl.classList.add('hidden'); return; }
         const data = await resp.json();
-        renderPosekInfo(data, month);
+        renderHeatmapValue(data, month);
     } catch (e) {
-        posekInfoEl.classList.add('hidden');
+        heatmapInfoEl.classList.add('hidden');
     }
 }
 
-function renderPosekInfo(data, month) {
+function renderHeatmapValue(data, month) {
     const [year, mon] = month.split('-');
     const label = `${SL_MONTHS[parseInt(mon, 10) - 1] ?? ''} ${year}`;
 
-    if (data.total_kubikov === 0) {
-        posekInfoEl.classList.remove('hidden');
-        posekInfoEl.innerHTML =
+    if (!data.has_data) {
+        heatmapInfoEl.classList.remove('hidden');
+        heatmapInfoEl.innerHTML =
             `<div class="posek-title">Posek — ${label}</div>` +
-            `<div class="posek-none">Ni evidentiranega poseka.</div>`;
+            `<div class="posek-none">Ni podatkov o poseku.</div>`;
         return;
     }
 
-    const breakdown = SHOW_ADVANCED_POSEK
-        ? `<div class="posek-breakdown">${
-            Object.entries(data.by_vzrok)
-                .map(([vzrok, kub]) => `<div>${vzrok}: <b>${kub.toLocaleString('sl-SI')} m³</b></div>`)
-                .join('')
-          }</div>`
-        : '';
+    const absStr = data.target != null
+        ? `${data.target.toLocaleString('sl-SI', {maximumFractionDigits: 2})} m³`
+        : '—';
+    const relStr = data.relative != null
+        ? `${data.relative.toLocaleString('sl-SI', {maximumFractionDigits: 4})} m³/ha`
+        : '—';
 
-    posekInfoEl.classList.remove('hidden');
-    posekInfoEl.innerHTML =
+    heatmapInfoEl.classList.remove('hidden');
+    heatmapInfoEl.innerHTML =
         `<div class="posek-title">Posek — ${label}</div>` +
-        `<div class="posek-total">${data.total_kubikov.toLocaleString('sl-SI')} m³</div>` +
-        breakdown;
+        `<div class="posek-total">${absStr}</div>` +
+        `<div class="posek-relative">${relStr}</div>`;
 }
 
 async function initHeatmap() {
@@ -734,7 +730,7 @@ function clearHighlight() {
     ++_highlightReqId;
     _applyFilter(NEVER_MATCH);
     selectedOdsekId = '';
-    posekInfoEl.classList.add('hidden');
+    heatmapInfoEl.classList.add('hidden');
 }
 
 /**
@@ -832,7 +828,7 @@ async function selectOdsek(odsekId, source = 'panel', ggoNameOverride = null, fe
     selectedOdsekEl.textContent = `Izbran odsek: ${cleanId} | GGO: ${ggoName}`;
     selectedOdsekId = cleanId;
     renderDetailsTable(payload.data);
-    fetchAndShowPosek(cleanId, currentMonthString()).catch(() => {});
+    fetchAndShowHeatmapValue(cleanId, currentMonthString(), ggoName).catch(() => {});
 
     // Apply the highlight filter immediately — MapLibre renders it correctly as tiles load.
     setHighlight(cleanId, ggoName);
@@ -1043,7 +1039,7 @@ map.on('click', 'odseki-fill', (event) => {
             selectedOdsekEl.textContent = `Izbran odsek: ${clickedOdsek} | GGO: ${fallbackGgoName}`;
             selectedOdsekId = clickedOdsek;
             renderDetailsTable(payload.data);
-            fetchAndShowPosek(clickedOdsek, currentMonthString()).catch(() => {});
+            fetchAndShowHeatmapValue(clickedOdsek, currentMonthString(), fallbackGgoName).catch(() => {});
             setHighlight(clickedOdsek, fallbackGgoName);
             const bbox = getBboxFromGeometry(geometry);
             if (bbox) {

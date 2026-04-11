@@ -1,36 +1,31 @@
 Data file-i in njihova uporaba
 
 
-data/heatmap_past_data.csv
+data/heatmap_past_data_no_zeros.csv  (generirano iz heatmap_past_data.csv)
+data/heatmap_future_predictions_no_zeros.csv  (generirano iz heatmap_future_predictions.csv)
 Stolpci: ggo, odsek_id, leto_mesec, target
-Vir: zgodovinski (izmerjeni) podatki aktivnosti poseka
-Server naloži ob zagonu — napaja heatmap za pretekle mesece
-Meja med preteklimi in napovedanimi podatki se določi avtomatsko iz heatmap_future_predictions.csv
+Vrstice z target == 0 so odstranjene (hitrejše nalaganje; ničelne vrednosti so implicitno bucket 0)
+Generiraj z: python scripts/drop_zero_rows.py target heatmap_past_data.csv heatmap_future_predictions.csv
 
-
-data/heatmap_future_predictions.csv
-Stolpci: ggo, odsek_id, leto_mesec, target
-Vir: napovedani podatki aktivnosti poseka
-Server naloži ob zagonu — napaja heatmap za prihodnje mesece
-Najzgodnejši mesec v tej datoteki postane FORECAST_START_MONTH (meja na sliderju)
-Če se mesec pojavi v obeh datotekah, OVERLAP_PREFER določi kateri vir zmaga (privzeto: 'predictions')
-
-
-data/posek_processed.csv
-Stolpci: ggo, odsek, manual, kubikov, vrsec, posekano, ko, parcela, leto, mesec
-
-Vsebuje dejanski posek v kubičnih metrih po odseku, mesecu in vzroku (vrsec)
-Prikaže se v levem panelu ko izbereš odsek + mesec: skupna količina m³ in po kategorijah (Sanitarni/Redni/Ostalo)
-Relevantna API pot: /api/posek?odsek=...&month=...
-Prikazuje se samo če total_kubikov > 0
+heatmap_past_data: zgodovinski (izmerjeni) podatki — napaja heatmap za pretekle mesece
+heatmap_future_predictions: napovedani podatki — napaja heatmap za prihodnje mesece
+  → Najzgodnejši mesec v future datoteki postane FORECAST_START_MONTH (meja na sliderju)
+  → Če se mesec pojavi v obeh, OVERLAP_PREFER določi kateri vir zmaga (privzeto: 'predictions')
+  → target se deli s povrsino odseka (ha) → relativni posek (m³/ha) za barvanje in prikaz
+  → Pragovi za buckete (1–4): auto iz kvantilov ali ročno z HEATMAP_CUSTOM_BREAKS
+  → API: /api/heatmap/meta, /api/heatmap?month=..., /api/heatmap/value?odsek=...&month=...&ggo=...
 
 
 data/odseki_nazivi.csv
-Stolpci: ggo_naziv, odsek, povrsina, gge_naziv, ke_naziv, revir_naziv, katgozd_naziv, ohranjen_naziv, relief_naziv, lega_naziv, pozar_naziv, intgosp_naziv, krajime, grt1_naziv
+Stolpci: ggo_naziv, odsek, povrsina, gge_naziv, ke_naziv, revir_naziv, katgozd_naziv,
+         ohranjen_naziv, relief_naziv, lega_naziv, pozar_naziv, intgosp_naziv, krajime, grt1_naziv
 
-Opisni atributi vsakega odseka (ime, površina, GGE, revir, kategorija gozda, ...)
+Opisni atributi vsakega odseka (ime, površina v ha, GGE, revir, kategorija gozda, ...)
 Prikazuje se v details tabeli v levem panelu ko klikneš/poiščeš odsek
 Napaja /api/ggo (seznam GGO območij) in /api/odseki/by-key
+povrsina se uporabi za izračun relativnega poseka (m³/ha):
+  → za barvanje: povprečje čez vse GGO-je z istim odsek_id (POVRSINA_BY_ODSEK)
+  → za detail panel: točna vrednost za izbran (odsek, ggo) par — ujema se s prikazanim podatkom
 OPOMBA: ne vsebuje vseh odsekov — ni vir za iskanje/suggest (glej odseki_vector_map.mbtiles)
 
 
@@ -68,6 +63,13 @@ Toggle z checkboxom v legendi
 data/odseki_processed.csv
 Vsebuje surove geometrije + vse numerične atribute odsekov (tarife, lzskdv vrednosti, ...)
 Ni direktno v uporabi v spletnem serverju — verjetno vhodni file za generiranje .mbtiles in odseki_nazivi.csv (preprocessing)
+
+
+scripts/drop_zero_rows.py
+Pomožni skript — odstrani vrstice kjer je vrednost določenega stolpca enaka 0
+Shrani rezultat v novo datoteko z pripono _no_zeros (original ostane nespremenjen)
+Uporaba: python drop_zero_rows.py <stolpec> <file.csv> [file2.csv ...]
+Primer: python drop_zero_rows.py target heatmap_past_data.csv heatmap_future_predictions.csv
 
 
 scripts/drop_is_a_prediction.py

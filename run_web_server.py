@@ -32,9 +32,6 @@ ODSEKI_DATA_FILENAME = 'odseki_nazivi.csv'
 ODSEKI_DATA_PATH = ODSEKI_DATA_DIR / ODSEKI_DATA_FILENAME
 
 # Heatmap source files — change these to point to different CSVs if needed.
-# _no_zeros variants (target == 0 rows removed) load faster; behaviour is identical
-# because zero-target rows are ignored when building buckets anyway.
-# Run scripts/drop_zero_rows.py target <file.csv> to generate them.
 HEATMAP_PAST_DATA_PATH   = BASE_DIR / 'data' / 'heatmap_past_data.csv'
 HEATMAP_FUTURE_DATA_PATH = BASE_DIR / 'data' / 'heatmap_future_predictions.csv'
 
@@ -60,14 +57,13 @@ GGO_CODE_TO_NAZIV = {
     14: 'SEŽANA',
 }
 
-POSEK_DATA_PATH = BASE_DIR / 'data' / 'posek_processed.csv'
+# Reverse of GGO_CODE_TO_NAZIV — used when loading odseki_nazivi for area lookup
+GGO_NAZIV_TO_CODE = {v: k for k, v in GGO_CODE_TO_NAZIV.items()}
 
-# Oznake vzrokov poseka
-VRSEC_LABELS = {
-    '301': 'Sanitarni posek',
-    '901': 'Redni posek',
-    '991': 'Ostalo',
-}
+# Heatmap bucket thresholds for relative posek (m³/ha).
+# Set to None to auto-compute from data quantiles (recommended).
+# Set to a list of exactly 3 values to use fixed thresholds, e.g. [0.5, 2.0, 5.0].
+HEATMAP_CUSTOM_BREAKS = None
 
 # Easy-to-change list of columns shown in the left panel.
 ODSEKI_FIELDS = [
@@ -92,14 +88,15 @@ ODSEK_BBOX = {}
 # {ggo_naziv: sorted list of odsek_ids} — built from ODSEK_BBOX, used for suggestions
 ODSEKI_BY_GGO = {}
 
+# {odsek_id: povrsina_ha} — built from odseki_nazivi, used for relative posek
+POVRSINA_BY_ODSEK = {}
+
 # Heatmap runtime data (populated by load_heatmap_data)
 HEATMAP_MONTHS = []           # sorted list of 'YYYY-MM' strings
-HEATMAP_NZ_BREAKS = []        # 3 break points for non-zero target buckets (buckets 1–4)
-HEATMAP_BY_MONTH = {}         # {leto_mesec: {odsek_id: bucket 1–4}} (only non-zero)
+HEATMAP_NZ_BREAKS = []        # 3 break points for non-zero relative-value buckets (buckets 1–4)
+HEATMAP_BY_MONTH = {}         # {leto_mesec: {odsek_id: bucket 1–4}} (only non-zero, relative)
+HEATMAP_ABS_BY_MONTH = {}     # {leto_mesec: {odsek_id: absolute target}} (for detail panel)
 FORECAST_START_MONTH = ''     # first month from the future predictions file
-
-# Posek: {odsek_id: {'YYYY-MM': {vzrok: kubikov_sum}}}
-POSEK_BY_ODSEK = {}
 
 
 # ---------------------------------------------------------------------------
@@ -343,12 +340,13 @@ def _extract_ggo_code_from_odsek(odsek_id):
 
 
 def load_odseki_data():
-    global ODSEKI_BY_KEY, ODSEKI_BY_ODSEK, GGO_NAMES, GGO_OPTIONS
+    global ODSEKI_BY_KEY, ODSEKI_BY_ODSEK, GGO_NAMES, GGO_OPTIONS, POVRSINA_BY_ODSEK
 
     ODSEKI_BY_KEY = {}
     ODSEKI_BY_ODSEK = defaultdict(list)
     GGO_NAMES = []
     GGO_OPTIONS = []
+    POVRSINA_BY_ODSEK = {}
 
     _configure_csv_field_limit()
 
@@ -359,6 +357,7 @@ def load_odseki_data():
     try:
         ggo_names = set()
         ggo_name_to_codes = defaultdict(set)
+        _povrsina_accum = {}
 
         with ODSEKI_DATA_PATH.open('r', encoding='utf-8-sig', newline='') as csv_file:
             reader = csv.DictReader(csv_file)
@@ -379,6 +378,17 @@ def load_odseki_data():
                 ggo_names.add(ggo_name)
                 if ggo_code:
                     ggo_name_to_codes[ggo_name].add(ggo_code)
+
+                # Accumulate areas — same odsek_id can appear in multiple GGOs
+                try:
+                    p = float(record.get('povrsina') or 0)
+                    if p > 0:
+                        _povrsina_accum.setdefault(odsek_id, []).append(p)
+                except ValueError:
+                    pass
+
+        # Average area across GGOs so coloring is consistent regardless of iteration order
+        POVRSINA_BY_ODSEK = {oid: sum(vals) / len(vals) for oid, vals in _povrsina_accum.items()}
 
         GGO_NAMES = sorted(ggo_names)
         GGO_OPTIONS = [
@@ -441,7 +451,7 @@ def _read_heatmap_file(path):
 
 
 def load_heatmap_data():
-    global HEATMAP_MONTHS, HEATMAP_NZ_BREAKS, HEATMAP_BY_MONTH, FORECAST_START_MONTH
+    global HEATMAP_MONTHS, HEATMAP_NZ_BREAKS, HEATMAP_BY_MONTH, HEATMAP_ABS_BY_MONTH, FORECAST_START_MONTH
 
     past_exists   = HEATMAP_PAST_DATA_PATH.exists()
     future_exists = HEATMAP_FUTURE_DATA_PATH.exists()
@@ -497,10 +507,38 @@ def load_heatmap_data():
     if skipped_ggo:
         print(f"WARNING: Neznane GGO kode v heatmap (preskočene): {sorted(skipped_ggo)}")
 
-    all_targets = [t for month_data in raw.values() for t in month_data.values()]
-    HEATMAP_MONTHS    = sorted(raw.keys())
-    HEATMAP_NZ_BREAKS = _nz_quantile_breaks(all_targets)
-    del all_targets
+    # Convert absolute targets → relative (m³/ha) using povrsina from odseki_nazivi.
+    # Segments with no area data fall back to the absolute value.
+    no_area = 0
+    for month_data in raw.values():
+        for odsek in list(month_data.keys()):
+            p = POVRSINA_BY_ODSEK.get(odsek, 0)
+            if p > 0:
+                month_data[odsek] /= p
+            else:
+                no_area += 1
+    if no_area:
+        print(f"  WARNING: {no_area} entries had no area data — kept as absolute fallback")
+
+    HEATMAP_MONTHS = sorted(raw.keys())
+
+    # Store absolute targets before bucketing (for the detail panel endpoint).
+    # Re-derive from relative × povrsina to avoid keeping a second full copy of raw.
+    HEATMAP_ABS_BY_MONTH = {}
+    for month, odsek_data in raw.items():
+        abs_month = {}
+        for odsek, rel in odsek_data.items():
+            p = POVRSINA_BY_ODSEK.get(odsek, 0)
+            abs_month[odsek] = round(rel * p if p > 0 else rel, 2)
+        HEATMAP_ABS_BY_MONTH[month] = abs_month
+
+    all_relative = [v for month_data in raw.values() for v in month_data.values()]
+    if HEATMAP_CUSTOM_BREAKS and len(HEATMAP_CUSTOM_BREAKS) == 3:
+        HEATMAP_NZ_BREAKS = list(HEATMAP_CUSTOM_BREAKS)
+        print(f"  Using custom breaks: {HEATMAP_NZ_BREAKS}")
+    else:
+        HEATMAP_NZ_BREAKS = _nz_quantile_breaks(all_relative)
+    del all_relative
 
     HEATMAP_BY_MONTH = {}
     for month, odsek_targets in raw.items():
@@ -515,43 +553,10 @@ def load_heatmap_data():
         f"Heatmap loaded: {len(HEATMAP_MONTHS)} months "
         f"(forecast from {FORECAST_START_MONTH or 'n/a'}), "
         f"{sum(len(v) for v in HEATMAP_BY_MONTH.values())} non-zero entries, "
-        f"breaks={[round(b, 2) for b in HEATMAP_NZ_BREAKS]}"
+        f"breaks (m³/ha)={[round(b, 4) for b in HEATMAP_NZ_BREAKS]}"
     )
 
 
-def load_posek_data():
-    global POSEK_BY_ODSEK
-
-    if not POSEK_DATA_PATH.exists():
-        print(f"WARNING: Posek data not found: {POSEK_DATA_PATH}")
-        return
-
-    print("Loading posek data...")
-    _configure_csv_field_limit()
-
-    tmp = defaultdict(lambda: defaultdict(lambda: defaultdict(float)))
-    # tmp[odsek_id]['YYYY-MM'][vzrok] += kubikov
-
-    with POSEK_DATA_PATH.open('r', encoding='utf-8', newline='') as f:
-        reader = csv.DictReader(f)
-        for row in reader:
-            odsek = (row.get('odsek') or '').strip()
-            if not odsek:
-                continue
-            try:
-                leto  = int(row.get('leto',  0))
-                mesec = int(row.get('mesec', 0))
-                kub   = float(row.get('kubikov', 0) or 0)
-            except ValueError:
-                continue
-            if not leto or not mesec:
-                continue
-            month_key = f"{leto}-{mesec:02d}"
-            vzrok = (row.get('vrsec') or '').strip()
-            tmp[odsek][month_key][vzrok] += kub
-
-    POSEK_BY_ODSEK = {odsek: dict(months) for odsek, months in tmp.items()}
-    print(f"Posek loaded: {len(POSEK_BY_ODSEK)} odseki")
 
 
 def _sanitize_static_path(request_path):
@@ -701,25 +706,39 @@ class TileHandler(BaseHTTPRequestHandler):
             })
             return
 
-        if path == '/api/posek':
+        if path == '/api/heatmap/value':
             query_map = parse_qs(parsed.query)
             odsek_id = query_map.get('odsek', [''])[0].strip()
             month    = query_map.get('month', [''])[0].strip()
+            ggo_name = query_map.get('ggo',   [''])[0].strip()
             if not odsek_id or not month:
                 self._send_json(400, {'error': 'Missing odsek or month'})
                 return
-            odsek_data = POSEK_BY_ODSEK.get(odsek_id, {})
-            by_vzrok_raw = odsek_data.get(month, {})
-            total = sum(by_vzrok_raw.values())
-            by_vzrok = {
-                VRSEC_LABELS.get(k, f'Vzrok {k}'): round(v, 2)
-                for k, v in sorted(by_vzrok_raw.items())
-            }
+            target_abs = (HEATMAP_ABS_BY_MONTH.get(month) or {}).get(odsek_id)
+            # Use exact area for this (odsek, ggo) pair when available — falls back
+            # to averaged area across GGOs if ggo is unknown or not in nazivi.
+            record   = ODSEKI_BY_KEY.get((ggo_name, odsek_id)) if ggo_name else None
+            povrsina = None
+            if record:
+                try:
+                    povrsina = float(record.get('povrsina') or 0) or None
+                except ValueError:
+                    pass
+            if povrsina is None:
+                povrsina = POVRSINA_BY_ODSEK.get(odsek_id)
+            if target_abs is None:
+                self._send_json(200, {'odsek': odsek_id, 'month': month,
+                                      'target': 0.0, 'relative': 0.0,
+                                      'povrsina': povrsina, 'has_data': False})
+                return
+            relative = round(target_abs / povrsina, 4) if povrsina else None
             self._send_json(200, {
-                'odsek': odsek_id,
-                'month': month,
-                'total_kubikov': round(total, 2),
-                'by_vzrok': by_vzrok,
+                'odsek':    odsek_id,
+                'month':    month,
+                'target':   target_abs,
+                'relative': relative,
+                'povrsina': povrsina,
+                'has_data': True,
             })
             return
 
@@ -852,7 +871,6 @@ def main():
 
     load_odseki_data()
     load_heatmap_data()
-    load_posek_data()
 
     global ODSEK_BBOX, ODSEKI_BY_GGO
     ODSEK_BBOX = _load_or_build_bbox_index(MBTILES_FILE, zoom=11)
