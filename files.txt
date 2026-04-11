@@ -1,19 +1,19 @@
 Data file-i in njihova uporaba
 
 
-data/heatmap_sorted.csv
+data/heatmap_past_data.csv
 Stolpci: ggo, odsek_id, leto_mesec, target
+Vir: zgodovinski (izmerjeni) podatki aktivnosti poseka
+Server naloži ob zagonu — napaja heatmap za pretekle mesece
+Meja med preteklimi in napovedanimi podatki se določi avtomatsko iz heatmap_future_predictions.csv
 
-Napove/izmeri aktivnost poseka po odseku in mesecu (vrednost target)
-Server izračuna kvantilne meje in vsak odsek razvrsti v bucket 0–4
-Frontend bere /api/heatmap?month=... in s funkcijo buildHeatmapExpression() obarva vsak odsek na mapi z eno od 5 barv heatmape
-Barve so definirane v styles.css:3-7:
-bucket 0 → #22c55e (zelena, ni aktivnosti)
-bucket 1 → #84cc16
-bucket 2 → #facc15 (rumena)
-bucket 3 → #f97316 (oranžna)
-bucket 4 → #ef4444 (rdeča, visoka aktivnost)
-Slider za mesec (/api/heatmap/meta) prikazuje kdaj so historični vs. napovedani podatki (meja: FORECAST_START_MONTH = '2025-01')
+
+data/heatmap_future_predictions.csv
+Stolpci: ggo, odsek_id, leto_mesec, target
+Vir: napovedani podatki aktivnosti poseka
+Server naloži ob zagonu — napaja heatmap za prihodnje mesece
+Najzgodnejši mesec v tej datoteki postane FORECAST_START_MONTH (meja na sliderju)
+Če se mesec pojavi v obeh datotekah, OVERLAP_PREFER določi kateri vir zmaga (privzeto: 'predictions')
 
 
 data/posek_processed.csv
@@ -30,8 +30,8 @@ Stolpci: ggo_naziv, odsek, povrsina, gge_naziv, ke_naziv, revir_naziv, katgozd_n
 
 Opisni atributi vsakega odseka (ime, površina, GGE, revir, kategorija gozda, ...)
 Prikazuje se v details tabeli v levem panelu ko klikneš/poiščeš odsek
-Poganja tudi autocomplete/suggest iskanje po odsek ID
-Napaja /api/ggo (seznam GGO območij) in /api/odseki/suggest
+Napaja /api/ggo (seznam GGO območij) in /api/odseki/by-key
+OPOMBA: ne vsebuje vseh odsekov — ni vir za iskanje/suggest (glej odseki_vector_map.mbtiles)
 
 
 data/odseki_vector_map.mbtiles
@@ -39,6 +39,16 @@ Vektorske tile-e za odseke — geometrije poligonov na mapi
 Servira se na /tiles/{z}/{x}/{y}
 Uporablja se za: risanje odsekov, klikanje, heatmap barvanje (fill-color), highlight izbranega odseka
 Ob zagonu server iz teh tiles zgradi bbox cache za zoom na odsek
+Primarni vir za autocomplete/suggest iskanje — ODSEKI_BY_GGO se zgradi iz bbox indexa
+  → pokriva vse odseke, ne samo tiste v odseki_nazivi.csv
+  → odsek ID-ji so normalizirani brez presledkov (npr. "01 58A" → "01058A")
+Bbox cache ima verzijsko številko (_BBOX_CACHE_VERSION); ob spremembi se samodejno obnovi
+
+
+data/odseki_vector_map.bbox_cache.json
+Cache bounding boxov za vse odseke (generiran iz .mbtiles ob zagonu)
+Pospeši zoom na odsek brez ponovnega dekodiranja tiles
+Vsebuje polje _version — ob neujemanju z _BBOX_CACHE_VERSION v serverju se cache samodejno obnovi
 
 
 data/ggo_vector_map.mbtiles
@@ -60,6 +70,7 @@ Vsebuje surove geometrije + vse numerične atribute odsekov (tarife, lzskdv vred
 Ni direktno v uporabi v spletnem serverju — verjetno vhodni file za generiranje .mbtiles in odseki_nazivi.csv (preprocessing)
 
 
-data/odseki_vector_map.bbox_cache.json
-Cache bounding boxov za vse odseke (generiran iz .mbtiles)
-Pospeši zoom na odsek brez ponovnega dekodiranja tiles
+scripts/drop_is_a_prediction.py
+Pomožni skript — odstrani stolpec is_a_prediction iz CSV datoteke
+Shrani rezultat v novo datoteko z pripono _no_prediction (original ostane nespremenjen)
+Uporaba: python drop_is_a_prediction.py <file.csv> [file2.csv ...]

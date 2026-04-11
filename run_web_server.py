@@ -32,6 +32,9 @@ ODSEKI_DATA_FILENAME = 'odseki_nazivi.csv'
 ODSEKI_DATA_PATH = ODSEKI_DATA_DIR / ODSEKI_DATA_FILENAME
 
 # Heatmap source files — change these to point to different CSVs if needed.
+# _no_zeros variants (target == 0 rows removed) load faster; behaviour is identical
+# because zero-target rows are ignored when building buckets anyway.
+# Run scripts/drop_zero_rows.py target <file.csv> to generate them.
 HEATMAP_PAST_DATA_PATH   = BASE_DIR / 'data' / 'heatmap_past_data.csv'
 HEATMAP_FUTURE_DATA_PATH = BASE_DIR / 'data' / 'heatmap_future_predictions.csv'
 
