@@ -2,3 +2,4 @@
 __pycache__/
 trash/
 .claude/
+data/heatmap_past_data.csv

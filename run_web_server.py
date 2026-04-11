@@ -31,7 +31,13 @@ ODSEKI_DATA_DIR = BASE_DIR / "data"
 ODSEKI_DATA_FILENAME = 'odseki_nazivi.csv'
 ODSEKI_DATA_PATH = ODSEKI_DATA_DIR / ODSEKI_DATA_FILENAME
 
-HEATMAP_DATA_PATH = BASE_DIR / 'data' / 'heatmap_sorted.csv'
+# Heatmap source files — change these to point to different CSVs if needed.
+HEATMAP_PAST_DATA_PATH   = BASE_DIR / 'data' / 'heatmap_past_data.csv'
+HEATMAP_FUTURE_DATA_PATH = BASE_DIR / 'data' / 'heatmap_future_predictions.csv'
+
+# When the same (odsek, month) appears in both files, which source wins?
+# 'predictions' → future file takes priority; 'data' → past file takes priority.
+OVERLAP_PREFER = 'predictions'
 
 # ── Preslikava ggo (številka v heatmap.csv) → ggo_naziv (niz v vector tilesih)
 GGO_CODE_TO_NAZIV = {
@@ -60,10 +66,6 @@ VRSEC_LABELS = {
     '991': 'Ostalo',
 }
 
-# ── Heatmap: spremenite FORECAST_START_MONTH, da premaknete mejo med
-#             izmerjenimi podatki in napovedmi. Format: 'YYYY-MM'
-FORECAST_START_MONTH = '2025-01'
-
 # Easy-to-change list of columns shown in the left panel.
 ODSEKI_FIELDS = [
     'ggo_naziv', 'odsek', 'povrsina', 'gge_naziv', 'ke_naziv', 'revir_naziv',
@@ -85,9 +87,10 @@ GGO_OPTIONS = []
 ODSEK_BBOX = {}
 
 # Heatmap runtime data (populated by load_heatmap_data)
-HEATMAP_MONTHS = []       # sorted list of 'YYYY-MM' strings
-HEATMAP_NZ_BREAKS = []    # 3 break points for non-zero target buckets (buckets 1–4)
-HEATMAP_BY_MONTH = {}     # {leto_mesec: {odsek_id: bucket 1–4}} (only non-zero)
+HEATMAP_MONTHS = []           # sorted list of 'YYYY-MM' strings
+HEATMAP_NZ_BREAKS = []        # 3 break points for non-zero target buckets (buckets 1–4)
+HEATMAP_BY_MONTH = {}         # {leto_mesec: {odsek_id: bucket 1–4}} (only non-zero)
+FORECAST_START_MONTH = ''     # first month from the future predictions file
 
 # Posek: {odsek_id: {'YYYY-MM': {vzrok: kubikov_sum}}}
 POSEK_BY_ODSEK = {}
@@ -406,24 +409,11 @@ def _assign_heatmap_bucket(target, nz_breaks):
     return 4
 
 
-def load_heatmap_data():
-    global HEATMAP_MONTHS, HEATMAP_NZ_BREAKS, HEATMAP_BY_MONTH
-
-    if not HEATMAP_DATA_PATH.exists():
-        print(f"WARNING: Heatmap data not found: {HEATMAP_DATA_PATH}")
-        return
-
-    print("Loading heatmap data (this may take a moment)...")
-    _configure_csv_field_limit()
-
-    # Vector tiles vsebujejo samo lastnost 'odsek' (brez GGO).
-    # Ker isti odsek_id obstaja v več GGO-jih, za vsak (mesec, odsek_id)
-    # obdržimo MAX target vrednost čez vse GGO-je.
-    raw = defaultdict(lambda: defaultdict(float))  # {month: {odsek_id: max_target}}
-    all_targets = []
+def _read_heatmap_file(path):
+    """Read one heatmap CSV and return {month: {odsek_id: max_target}}, skipped_ggo set."""
+    raw = defaultdict(lambda: defaultdict(float))
     skipped_ggo = set()
-
-    with HEATMAP_DATA_PATH.open('r', encoding='utf-8', newline='') as f:
+    with path.open('r', encoding='utf-8', newline='') as f:
         reader = csv.DictReader(f)
         for row in reader:
             month = row.get('leto_mesec', '').strip()
@@ -440,14 +430,67 @@ def load_heatmap_data():
                 continue
             if target > raw[month][odsek]:
                 raw[month][odsek] = target
+    return raw, skipped_ggo
 
-    # Zberemo vse target vrednosti za izračun kvantilov
-    for month_data in raw.values():
-        all_targets.extend(month_data.values())
+
+def load_heatmap_data():
+    global HEATMAP_MONTHS, HEATMAP_NZ_BREAKS, HEATMAP_BY_MONTH, FORECAST_START_MONTH
+
+    past_exists   = HEATMAP_PAST_DATA_PATH.exists()
+    future_exists = HEATMAP_FUTURE_DATA_PATH.exists()
+
+    if not past_exists and not future_exists:
+        print(f"WARNING: Neither heatmap file found "
+              f"({HEATMAP_PAST_DATA_PATH.name}, {HEATMAP_FUTURE_DATA_PATH.name})")
+        return
+
+    print("Loading heatmap data (this may take a moment)...")
+    _configure_csv_field_limit()
+
+    skipped_ggo = set()
+
+    raw_past = defaultdict(lambda: defaultdict(float))
+    if past_exists:
+        raw_past, sg = _read_heatmap_file(HEATMAP_PAST_DATA_PATH)
+        skipped_ggo |= sg
+        print(f"  Past data:   {sum(len(v) for v in raw_past.values()):,} entries "
+              f"across {len(raw_past)} months")
+    else:
+        print(f"WARNING: Past heatmap file not found: {HEATMAP_PAST_DATA_PATH}")
+
+    raw_future = defaultdict(lambda: defaultdict(float))
+    if future_exists:
+        raw_future, sg = _read_heatmap_file(HEATMAP_FUTURE_DATA_PATH)
+        skipped_ggo |= sg
+        print(f"  Future data: {sum(len(v) for v in raw_future.values()):,} entries "
+              f"across {len(raw_future)} months")
+    else:
+        print(f"WARNING: Future heatmap file not found: {HEATMAP_FUTURE_DATA_PATH}")
+
+    # Derive forecast start from the earliest month in the future file.
+    FORECAST_START_MONTH = min(raw_future.keys()) if raw_future else ''
+
+    # Merge both sources. For overlapping (month, odsek) pairs, OVERLAP_PREFER decides.
+    all_months = set(raw_past.keys()) | set(raw_future.keys())
+    raw = {}
+    for month in all_months:
+        in_past   = month in raw_past
+        in_future = month in raw_future
+        if in_past and in_future:
+            if OVERLAP_PREFER == 'predictions':
+                merged = {**raw_past[month], **raw_future[month]}   # future overwrites
+            else:
+                merged = {**raw_future[month], **raw_past[month]}   # past overwrites
+        elif in_past:
+            merged = dict(raw_past[month])
+        else:
+            merged = dict(raw_future[month])
+        raw[month] = merged
 
     if skipped_ggo:
         print(f"WARNING: Neznane GGO kode v heatmap (preskočene): {sorted(skipped_ggo)}")
 
+    all_targets = [t for month_data in raw.values() for t in month_data.values()]
     HEATMAP_MONTHS    = sorted(raw.keys())
     HEATMAP_NZ_BREAKS = _nz_quantile_breaks(all_targets)
     del all_targets
@@ -462,7 +505,8 @@ def load_heatmap_data():
         HEATMAP_BY_MONTH[month] = buckets
 
     print(
-        f"Heatmap loaded: {len(HEATMAP_MONTHS)} months, "
+        f"Heatmap loaded: {len(HEATMAP_MONTHS)} months "
+        f"(forecast from {FORECAST_START_MONTH or 'n/a'}), "
         f"{sum(len(v) for v in HEATMAP_BY_MONTH.values())} non-zero entries, "
         f"breaks={[round(b, 2) for b in HEATMAP_NZ_BREAKS]}"
     )
@@ -798,6 +842,9 @@ def main():
     print(f"Serving {MBTILES_FILE}")
     print(f"Serving static files from {STATIC_DIR}")
     print(f"Odseki data file: {ODSEKI_DATA_PATH}")
+    print(f"Heatmap past data:   {HEATMAP_PAST_DATA_PATH}")
+    print(f"Heatmap future data: {HEATMAP_FUTURE_DATA_PATH}")
+    print(f"Overlap preference: {OVERLAP_PREFER}")
     print(f"Open http://localhost:{PORT} in your browser")
     print("Press Ctrl+C to stop")
 
