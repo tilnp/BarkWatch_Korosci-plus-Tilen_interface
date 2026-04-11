@@ -86,6 +86,9 @@ GGO_OPTIONS = []
 # (ggo_naziv, odsek) -> [west, south, east, north]  built from mbtiles at zoom 11
 ODSEK_BBOX = {}
 
+# {ggo_naziv: sorted list of odsek_ids} — built from ODSEK_BBOX, used for suggestions
+ODSEKI_BY_GGO = {}
+
 # Heatmap runtime data (populated by load_heatmap_data)
 HEATMAP_MONTHS = []           # sorted list of 'YYYY-MM' strings
 HEATMAP_NZ_BREAKS = []        # 3 break points for non-zero target buckets (buckets 1–4)
@@ -290,7 +293,8 @@ def build_odsek_bbox_index(mbtiles_file: str, zoom: int = 11) -> dict:
                 raw_bbox = feat['bbox']
                 extent = feat['extent']
                 ggo = str(props.get('ggo_naziv', '')).strip()
-                odsek = str(props.get('odsek', '')).strip()
+                # Strip all spaces — mbtiles stores e.g. "01 58A", CSV has "01058A"
+                odsek = str(props.get('odsek', '')).replace(' ', '')
                 if not ggo or not odsek or raw_bbox is None:
                     continue
                 mn_x, mn_y, mx_x, mx_y = raw_bbox
@@ -656,10 +660,9 @@ class TileHandler(BaseHTTPRequestHandler):
             else:
                 suggestions = [
                     odsek_id
-                    for (ggo, odsek_id) in ODSEKI_BY_KEY.keys()
-                    if ggo == ggo_name and query in odsek_id.lower()
-                ]
-                suggestions = sorted(set(suggestions), key=_odsek_sort_key)[:SUGGESTION_LIMIT]
+                    for odsek_id in ODSEKI_BY_GGO.get(ggo_name, [])
+                    if query in odsek_id.lower()
+                ][:SUGGESTION_LIMIT]
 
             self._send_json(200, {
                 'query': query,
@@ -789,6 +792,10 @@ class TileHandler(BaseHTTPRequestHandler):
         self._serve_static_file(path)
 
 
+# Increment this when the cache format or odsek normalisation logic changes.
+_BBOX_CACHE_VERSION = 2
+
+
 def _load_or_build_bbox_index(mbtiles_file: str, zoom: int = 11) -> dict:
     """Load bbox index from cache file if up-to-date, otherwise rebuild and save."""
     cache_path = Path(mbtiles_file).with_suffix('.bbox_cache.json')
@@ -799,10 +806,17 @@ def _load_or_build_bbox_index(mbtiles_file: str, zoom: int = 11) -> dict:
             if os.path.getmtime(cache_path) >= mbtiles_mtime:
                 with cache_path.open('r', encoding='utf-8') as f:
                     raw = json.load(f)
-                # JSON keys are strings; restore tuple keys
-                index = {tuple(k.split('\x00', 1)): v for k, v in raw.items()}
-                print(f"Bbox index loaded from cache ({len(index)} entries)")
-                return index
+                if raw.get('_version') != _BBOX_CACHE_VERSION:
+                    print(f"Bbox cache version mismatch, rebuilding...")
+                else:
+                    # JSON keys are strings; restore tuple keys (skip metadata key)
+                    index = {
+                        tuple(k.split('\x00', 1)): v
+                        for k, v in raw.items()
+                        if not k.startswith('_')
+                    }
+                    print(f"Bbox index loaded from cache ({len(index)} entries)")
+                    return index
         except Exception as e:
             print(f"Cache read failed ({e}), rebuilding...")
 
@@ -812,6 +826,7 @@ def _load_or_build_bbox_index(mbtiles_file: str, zoom: int = 11) -> dict:
 
     try:
         raw = {f"{ggo}\x00{odsek}": bbox for (ggo, odsek), bbox in index.items()}
+        raw['_version'] = _BBOX_CACHE_VERSION
         with cache_path.open('w', encoding='utf-8') as f:
             json.dump(raw, f, ensure_ascii=False)
         print(f"Bbox index cached to {cache_path.name}")
@@ -836,8 +851,15 @@ def main():
     load_heatmap_data()
     load_posek_data()
 
-    global ODSEK_BBOX
+    global ODSEK_BBOX, ODSEKI_BY_GGO
     ODSEK_BBOX = _load_or_build_bbox_index(MBTILES_FILE, zoom=11)
+
+    # Build suggestion index from mbtiles-derived segments
+    by_ggo = defaultdict(list)
+    for (ggo_naziv, odsek_id) in ODSEK_BBOX:
+        by_ggo[ggo_naziv].append(odsek_id)
+    ODSEKI_BY_GGO = {ggo: sorted(ids, key=_odsek_sort_key) for ggo, ids in by_ggo.items()}
+    print(f"Suggestion index: {sum(len(v) for v in ODSEKI_BY_GGO.values()):,} segments across {len(ODSEKI_BY_GGO)} GGO")
 
     print(f"Serving {MBTILES_FILE}")
     print(f"Serving static files from {STATIC_DIR}")
