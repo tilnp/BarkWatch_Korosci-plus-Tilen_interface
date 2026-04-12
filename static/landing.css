@@ -1,0 +1,195 @@
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body {
+  height: 100%;
+  font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+  background: #f0f4f0;
+  color: #0f172a;
+}
+
+body {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+}
+
+/* ─── Fullscreen video hero ─────────────────────────────────── */
+.hero {
+  position: relative;
+  height: 100vh;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.hero-video {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center center;
+}
+
+.hero-overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(5, 15, 8, 0.42);
+}
+
+/* ─── Centered content stack over the video ─────────────────── */
+.hero-content {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 20px;
+  padding: 24px;
+}
+
+/* ─── Shared card style ──────────────────────────────────────── */
+.card {
+  background: #ffffff;
+  border: 1px solid #e2e8e0;
+  border-radius: 12px;
+  box-shadow: 0 8px 40px rgba(5, 15, 8, 0.35);
+  width: 100%;
+  max-width: 600px;
+}
+
+.card-main {
+  padding: 40px 48px 36px;
+}
+
+.card-cta {
+  padding: 20px 48px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* ─── Title ─────────────────────────────────────────────────── */
+h1 {
+  font-size: clamp(48px, 9vw, 80px);
+  font-weight: 800;
+  letter-spacing: -0.04em;
+  line-height: 1;
+  text-align: center;
+  color: #0f172a;
+}
+
+h1 .watch { color: #166534; }
+
+.title-rule {
+  width: 40px;
+  height: 3px;
+  background: #4ade80;
+  border-radius: 2px;
+  margin: 18px auto 28px;
+}
+
+/* ─── Placeholder blocks ─────────────────────────────────────── */
+.placeholders {
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+}
+
+.placeholder-block {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.ph-lines {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.ph-line {
+  height: 12px;
+  background: #d1d9d1;
+  border-radius: 3px;
+}
+.ph-line.long  { width: 100%; }
+.ph-line.mid   { width: 70%; }
+.ph-line.short { width: 46%; }
+
+.ph-label {
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: #94a3b8;
+  font-weight: 500;
+  margin-top: 2px;
+}
+
+/* ─── CTA button ─────────────────────────────────────────────── */
+.cta-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  text-decoration: none;
+  background: #ffffff;
+  color: #0f172a;
+  border: 1.5px solid #0f172a;
+  border-radius: 8px;
+  padding: 12px 36px;
+  font-size: 1rem;
+  font-family: inherit;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  transition: background 0.14s, border-color 0.14s;
+}
+
+.cta-btn .arrow {
+  font-size: 1.1rem;
+  transition: transform 0.14s;
+  display: inline-block;
+}
+
+.cta-btn:hover { background: #f1f5f1; border-color: #166534; }
+.cta-btn:hover .arrow { transform: translateX(3px); }
+.cta-btn:active { background: #e8f0e8; }
+
+/* ─── Footer ────────────────────────────────────────────────── */
+footer {
+  padding: 14px 28px 18px;
+  border-top: 1px solid #d1d9d1;
+  text-align: center;
+  font-size: 0.75rem;
+  color: #94a3b8;
+}
+
+/* ─── Responsive ─────────────────────────────────────────────── */
+@media (max-width: 560px) {
+  .card-main { padding: 28px 24px 24px; }
+  .card-cta  { padding: 16px 24px; }
+}
+
+/* ─── Page-exit transition ───────────────────────────────────── */
+.transition-overlay {
+  position: fixed;
+  inset: 0;
+  background: #0a1a0d;
+  z-index: 9999;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.45s ease-in;
+}
+
+body.exiting .hero-content {
+  animation: exit-content 0.38s ease-in forwards;
+}
+
+body.exiting .transition-overlay {
+  opacity: 1;
+  pointer-events: all;
+}
+
+@keyframes exit-content {
+  from { opacity: 1; transform: translateY(0)   scale(1);    }
+  to   { opacity: 0; transform: translateY(-28px) scale(0.96); }
+}

@@ -812,7 +812,7 @@ def _load_or_build_gge_cache():
 
 
 def _sanitize_static_path(request_path):
-    rel = request_path.lstrip('/') or 'index.html'
+    rel = request_path.lstrip('/') or 'landing.html'
     full = (STATIC_DIR / rel).resolve()
 
     static_root = STATIC_DIR.resolve()
@@ -896,6 +896,48 @@ class TileHandler(BaseHTTPRequestHandler):
             self.send_header('Content-Length', str(len(content)))
             self.end_headers()
             self.wfile.write(content)
+        except Exception:
+            self.send_response(500)
+            self.end_headers()
+
+    def _serve_video_file(self, path: Path):
+        if not path.exists() or not path.is_file():
+            self.send_response(404)
+            self.end_headers()
+            return
+
+        file_size = path.stat().st_size
+        range_header = self.headers.get('Range')
+
+        try:
+            with path.open('rb') as f:
+                if range_header:
+                    # Parse "bytes=start-end"
+                    byte_range = range_header.strip().replace('bytes=', '')
+                    start_str, _, end_str = byte_range.partition('-')
+                    start = int(start_str) if start_str else 0
+                    end   = int(end_str)   if end_str   else file_size - 1
+                    end   = min(end, file_size - 1)
+                    length = end - start + 1
+                    f.seek(start)
+                    data = f.read(length)
+                    self.send_response(206)
+                    self.send_header('Content-Type', 'video/mp4')
+                    self.send_header('Content-Length', str(length))
+                    self.send_header('Content-Range', f'bytes {start}-{end}/{file_size}')
+                    self.send_header('Accept-Ranges', 'bytes')
+                    self.end_headers()
+                    self.wfile.write(data)
+                else:
+                    data = f.read()
+                    self.send_response(200)
+                    self.send_header('Content-Type', 'video/mp4')
+                    self.send_header('Content-Length', str(file_size))
+                    self.send_header('Accept-Ranges', 'bytes')
+                    self.end_headers()
+                    self.wfile.write(data)
+        except (BrokenPipeError, ConnectionResetError):
+            pass
         except Exception:
             self.send_response(500)
             self.end_headers()
@@ -1093,6 +1135,10 @@ class TileHandler(BaseHTTPRequestHandler):
 
         if path.startswith('/tiles/'):
             self._serve_mbtiles_tile(ODSEKI_MBTILES_FILE, path)
+            return
+
+        if path == '/video_background3.mp4':
+            self._serve_video_file(BASE_DIR / 'data' / 'video_background3.mp4')
             return
 
         self._serve_static_file(path)

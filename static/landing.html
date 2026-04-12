@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>BarkWatch</title>
+  <link rel="stylesheet" href="/landing.css">
+</head>
+<body>
+
+  <div class="transition-overlay"></div>
+
+  <div class="hero">
+    <video class="hero-video" autoplay muted loop playsinline>
+      <source src="/video_background3.mp4" type="video/mp4">
+    </video>
+    <div class="hero-overlay"></div>
+
+    <div class="hero-content">
+
+      <!-- title + placeholders -->
+      <div class="card card-main">
+        <h1><span class="bark">Bark</span><span class="watch">Watch</span></h1>
+        <div class="title-rule"></div>
+
+        <div class="placeholders">
+          <div class="placeholder-block">
+            <div class="ph-lines">
+              <div class="ph-line long"></div>
+              <div class="ph-line mid"></div>
+              <div class="ph-line short"></div>
+            </div>
+            <span class="ph-label">Placeholder — primary description</span>
+          </div>
+
+          <div class="placeholder-block">
+            <div class="ph-lines">
+              <div class="ph-line long"></div>
+              <div class="ph-line mid"></div>
+            </div>
+            <span class="ph-label">Placeholder — secondary description</span>
+          </div>
+
+          <div class="placeholder-block">
+            <div class="ph-lines">
+              <div class="ph-line long"></div>
+              <div class="ph-line mid"></div>
+              <div class="ph-line short"></div>
+            </div>
+            <span class="ph-label">Placeholder — data / methodology note</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Open Map button box -->
+      <div class="card card-cta">
+        <a href="/index.html" class="cta-btn">
+          Open Map <span class="arrow">→</span>
+        </a>
+      </div>
+
+    </div>
+  </div>
+
+  <footer>
+    Koro&scaron;ci+Tilen &mdash; Arnes Hackathon 2026
+  </footer>
+
+  <script>
+    document.querySelector('.cta-btn').addEventListener('click', function (e) {
+      e.preventDefault();
+      const href = this.href;
+      document.body.classList.add('exiting');
+      setTimeout(() => { window.location.href = href; }, 700);
+    });
+
+    // When browser restores page from bfcache (back button), reset exit state
+    window.addEventListener('pageshow', function (e) {
+      if (e.persisted) {
+        document.body.classList.remove('exiting');
+      }
+    });
+  </script>
+</body>
+</html>

@@ -547,3 +547,18 @@ html, body {
         min-width: 420px;
     }
 }
+
+/* ─── Page-enter transition (from landing page) ──────────────── */
+#page-enter-overlay {
+    position: fixed;
+    inset: 0;
+    background: #0a1a0d;
+    z-index: 9999;
+    pointer-events: none;
+    animation: page-enter 0.55s ease-out 0.05s forwards;
+}
+
+@keyframes page-enter {
+    from { opacity: 1; }
+    to   { opacity: 0; }
+}
