@@ -123,6 +123,29 @@ const map = new maplibregl.Map({
                 }
             },
             {
+                id: 'gge-outline',
+                type: 'line',
+                source: 'gge',
+                'source-layer': 'gge_maps',
+                paint: {
+                    'line-color': COLOR_ODSEKI_BORDER,
+                    'line-width': 0.8,
+                    'line-opacity': 0.6
+                }
+            },
+            {
+                id: 'gge-selected-outline',
+                type: 'line',
+                source: 'gge',
+                'source-layer': 'gge_maps',
+                filter: ['==', ['get', 'gge_naziv'], ''],
+                paint: {
+                    'line-color': '#60cdee',
+                    'line-width': 2.5,
+                    'line-opacity': 1
+                }
+            },
+            {
                 id: 'slovenija-outline',
                 type: 'line',
                 source: 'slovenija',
@@ -189,7 +212,8 @@ map.addControl({
         btn.title = 'Ponastavi pogled';
         btn.innerHTML = '⌂';
         btn.addEventListener('click', () => {
-            map.flyTo({ center: SLOVENIA_CENTER, zoom: INITIAL_ZOOM, duration: ANIM.reset });
+            clearHighlight();
+            map.flyTo({ center: SLOVENIA_CENTER, zoom: INITIAL_ZOOM, bearing: 0, pitch: 0, duration: ANIM.reset });
         });
         this._container.appendChild(btn);
         return this._container;
@@ -768,10 +792,23 @@ function _applyFilter(f) {
     if (map.getLayer('odseki-selected-outline')) map.setFilter('odseki-selected-outline', f);
 }
 
+function setGgeHighlight(ggeName) {
+    if (map.getLayer('gge-selected-outline')) {
+        map.setFilter('gge-selected-outline',
+            ggeName ? ['==', ['get', 'gge_naziv'], ggeName] : ['==', ['get', 'gge_naziv'], '']
+        );
+    }
+}
+
+function clearGgeHighlight() {
+    setGgeHighlight(null);
+}
+
 /** Clear the highlight layers. */
 function clearHighlight() {
     ++_highlightReqId;
     _applyFilter(NEVER_MATCH);
+    clearGgeHighlight();
     selectedOdsekId = '';
     heatmapInfoEl.classList.add('hidden');
 }
@@ -844,9 +881,8 @@ function setHighlight(odsekId, ggoName) {
  * @param {string} odsekId
  * @param {'panel'|'manual'} source
  * @param {string|null} ggoNameOverride  - GGO name detected from tile props (overrides dropdown)
- * @param {object|null} featureGeometry  - GeoJSON geometry of the clicked tile feature
  */
-async function selectOdsek(odsekId, source = 'panel', ggoNameOverride = null, featureGeometry = null) {
+async function selectOdsek(odsekId, source = 'panel', ggoNameOverride = null) {
     const cleanId = String(odsekId || '').trim();
     if (!cleanId) return;
 
@@ -875,13 +911,24 @@ async function selectOdsek(odsekId, source = 'panel', ggoNameOverride = null, fe
 
     // Apply the highlight filter immediately — MapLibre renders it correctly as tiles load.
     setHighlight(cleanId, ggoName);
+    setGgeHighlight(String(payload.data.gge_naziv || '').trim());
 
     const duration = source === 'panel' ? ANIM.panel : ANIM.manual;
 
-    // 1. Direct geometry from a map click — use the clicked feature's bbox to fly.
-    if (featureGeometry) {
-        const bbox = getBboxFromGeometry(featureGeometry);
-        if (bbox) {
+    // 1. Query all tile pieces of this odsek to get the true combined bbox.
+    {
+        const allFeatures = map.querySourceFeatures('odseki', {
+            sourceLayer: 'odseki_map_ggo_gge',
+            filter: ['==', ['to-string', ['get', 'odsek']], cleanId]
+        });
+        let bbox = [Infinity, Infinity, -Infinity, -Infinity];
+        for (const f of allFeatures) {
+            const b = getBboxFromGeometry(f.geometry);
+            if (!b) continue;
+            bbox = [Math.min(bbox[0], b[0]), Math.min(bbox[1], b[1]),
+                    Math.max(bbox[2], b[2]), Math.max(bbox[3], b[3])];
+        }
+        if (Number.isFinite(bbox[0])) {
             map.fitBounds([[bbox[0], bbox[1]], [bbox[2], bbox[3]]], { padding: 70, duration, maxZoom: 14 });
             return;
         }
@@ -1004,7 +1051,7 @@ function _updateZoomVisibility() {
     const zoom = map.getZoom();
     const showGGE = zoom < GGE_TO_ODSEK_ZOOM;
     if (map.getLayer('gge-fill')) {
-        map.setLayoutProperty('gge-fill',      'visibility', showGGE ? 'visible' : 'none');
+        map.setLayoutProperty('gge-fill', 'visibility', showGGE ? 'visible' : 'none');
     }
     if (map.getLayer('odseki-fill')) {
         map.setLayoutProperty('odseki-fill',    'visibility', showGGE ? 'none' : 'visible');
@@ -1041,15 +1088,35 @@ monthSlider.addEventListener('change', () => {
     applyMonthColor().catch(console.error);
 });
 
+map.on('click', 'gge-fill', (event) => {
+    const feature = event.features?.[0];
+    if (!feature) return;
+    const ggeName = String(feature?.properties?.gge_naziv || '').trim();
+    if (!ggeName) return;
+    setGgeHighlight(ggeName);
+
+    // Query ALL tile pieces of this GGE across the full source to get the true combined bbox.
+    const allFeatures = map.querySourceFeatures('gge', {
+        sourceLayer: 'gge_maps',
+        filter: ['==', ['get', 'gge_naziv'], ggeName]
+    });
+    let bbox = [Infinity, Infinity, -Infinity, -Infinity];
+    for (const f of allFeatures) {
+        const b = getBboxFromGeometry(f.geometry);
+        if (!b) continue;
+        bbox = [Math.min(bbox[0], b[0]), Math.min(bbox[1], b[1]),
+                Math.max(bbox[2], b[2]), Math.max(bbox[3], b[3])];
+    }
+    if (!Number.isFinite(bbox[0])) return;
+    map.fitBounds([[bbox[0], bbox[1]], [bbox[2], bbox[3]]], { padding: 50, duration: ANIM.manual, maxZoom: GGE_TO_ODSEK_ZOOM });
+});
+
 map.on('click', 'odseki-fill', (event) => {
     const feature = event.features?.[0];
     const props = feature?.properties || {};
     if (!props.odsek) return;
 
     const clickedOdsek = String(props.odsek);
-    // Geometry of the clicked feature — used for direct map positioning so the map never
-    // flies to a different GGO's odsek that happens to share the same odsek code.
-    const geometry = feature?.geometry || null;
 
     // 1. Try to determine the GGO directly from the tile feature properties (tiles have ggo_naziv).
     const detectedGgoName = detectGgoNameFromProps(props);
@@ -1060,7 +1127,7 @@ map.on('click', 'odseki-fill', (event) => {
             ggoSelect.value = detectedGgoName;
             setSearchEnabled(true);
         }
-        selectOdsek(clickedOdsek, 'manual', detectedGgoName, geometry).catch((err) => {
+        selectOdsek(clickedOdsek, 'manual', detectedGgoName).catch((err) => {
             console.error('selectOdsek failed', err);
         });
         return;
@@ -1068,7 +1135,7 @@ map.on('click', 'odseki-fill', (event) => {
 
     // 2. Tiles have no GGO field. If the user has a GGO selected in the dropdown, use it.
     if (selectedGgoName()) {
-        selectOdsek(clickedOdsek, 'manual', null, geometry).catch((err) => {
+        selectOdsek(clickedOdsek, 'manual', null).catch((err) => {
             console.error('selectOdsek failed', err);
         });
         return;
@@ -1098,13 +1165,28 @@ map.on('click', 'odseki-fill', (event) => {
             renderDetailsTable(payload.data);
             fetchAndShowHeatmapValue(clickedOdsek, currentMonthString(), fallbackGgoName).catch(() => {});
             setHighlight(clickedOdsek, fallbackGgoName);
-            const bbox = getBboxFromGeometry(geometry);
-            if (bbox) {
-                map.fitBounds([[bbox[0], bbox[1]], [bbox[2], bbox[3]]], { padding: 70, duration: ANIM.manual, maxZoom: 14 });
+            {
+                const allFeatures = map.querySourceFeatures('odseki', {
+                    sourceLayer: 'odseki_map_ggo_gge',
+                    filter: ['==', ['to-string', ['get', 'odsek']], clickedOdsek]
+                });
+                let bbox = [Infinity, Infinity, -Infinity, -Infinity];
+                for (const f of allFeatures) {
+                    const b = getBboxFromGeometry(f.geometry);
+                    if (!b) continue;
+                    bbox = [Math.min(bbox[0], b[0]), Math.min(bbox[1], b[1]),
+                            Math.max(bbox[2], b[2]), Math.max(bbox[3], b[3])];
+                }
+                if (Number.isFinite(bbox[0])) {
+                    map.fitBounds([[bbox[0], bbox[1]], [bbox[2], bbox[3]]], { padding: 70, duration: ANIM.manual, maxZoom: 14 });
+                }
             }
         }
     });
 });
+
+map.on('mouseenter', 'gge-fill', () => { map.getCanvas().style.cursor = 'pointer'; });
+map.on('mouseleave', 'gge-fill', () => { map.getCanvas().style.cursor = ''; });
 
 map.on('mouseenter', 'odseki-fill', () => {
     map.getCanvas().style.cursor = 'pointer';

@@ -898,7 +898,7 @@ class TileHandler(BaseHTTPRequestHandler):
                 suggestions = [
                     odsek_id
                     for odsek_id in ODSEKI_BY_GGO.get(ggo_name, [])
-                    if query in odsek_id.lower()
+                    if odsek_id.lower().startswith(query)
                 ][:SUGGESTION_LIMIT]
 
             self._send_json(200, {
