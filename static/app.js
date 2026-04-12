@@ -625,18 +625,22 @@ function detectDiscriminator(features, ggoCode, ggoName) {
 function findBoundsInLoadedTiles(odsekId, ggoCode, ggoName) {
     if (!map.isStyleLoaded()) return null;
 
-    const features = map.querySourceFeatures('odseki', { sourceLayer: 'odsek' });
+    const features = map.querySourceFeatures('odseki', { sourceLayer: 'odseki_map_ggo_gge' });
     const odsekCandidates = features.filter((feature) => normalize(feature?.properties?.odsek) === normalize(odsekId));
     if (!odsekCandidates.length) return null;
 
     const discriminator = detectDiscriminator(odsekCandidates, ggoCode, ggoName);
     const found = odsekCandidates.find((feature) =>
         featureMatchesSelection(feature, odsekId, ggoCode, ggoName, discriminator)
-    ) || odsekCandidates[0];
+    );
 
-    if (!found || !found.geometry) return null;
+    // Only fall back to any candidate when no GGO context is given at all.
+    if (!found && (ggoCode || ggoName)) return null;
+    const target = found || odsekCandidates[0];
 
-    const bbox = coordinatesBbox(found.geometry.coordinates, [Infinity, Infinity, -Infinity, -Infinity]);
+    if (!target || !target.geometry) return null;
+
+    const bbox = coordinatesBbox(target.geometry.coordinates, [Infinity, Infinity, -Infinity, -Infinity]);
     if (!Number.isFinite(bbox[0])) return null;
 
     return bbox;
@@ -671,8 +675,7 @@ function waitForMoveEnd(timeoutMs = 1600) {
 }
 
 async function sweepForOdsekBbox(odsekId, ggoCode, ggoName, animateSweep) {
-    let bbox = findBoundsInLoadedTiles(odsekId, ggoCode, ggoName)
-        || findBoundsInLoadedTiles(odsekId, '', '');
+    let bbox = findBoundsInLoadedTiles(odsekId, ggoCode, ggoName);
     if (bbox) return bbox;
 
     const maxBounds = map.getMaxBounds();
@@ -702,8 +705,7 @@ async function sweepForOdsekBbox(odsekId, ggoCode, ggoName, animateSweep) {
             await sleep(130);
         }
 
-        bbox = findBoundsInLoadedTiles(odsekId, ggoCode, ggoName)
-            || findBoundsInLoadedTiles(odsekId, '', '');
+        bbox = findBoundsInLoadedTiles(odsekId, ggoCode, ggoName);
         if (bbox) return bbox;
     }
 
@@ -878,7 +880,7 @@ function setHighlight(odsekId, ggoName) {
     map.once('idle', () => {
         if (reqId !== _highlightReqId) return; // a newer selection superseded this one
 
-        const features = map.querySourceFeatures('odseki', { sourceLayer: 'odsek' });
+        const features = map.querySourceFeatures('odseki', { sourceLayer: 'odseki_map_ggo_gge' });
 
         // Only look at features that already match the odsek ID.
         const candidates = features.filter(
@@ -956,11 +958,16 @@ async function selectOdsek(odsekId, source = 'panel', ggoNameOverride = null) {
     // Pre-apply odsek view immediately so tiles start loading during the flight animation.
     _updateZoomVisibility(GGE_TO_ODSEK_ZOOM);
 
-    // 1. Query all tile pieces of this odsek to get the true combined bbox.
+    // 1. Query all tile pieces of this odsek (filtered by GGO+odsek pair) to get the true combined bbox.
     {
+        const ggoFilter = ggoName
+            ? ['==', ['to-string', ['get', 'ggo_naziv']], ggoName]
+            : null;
+        const odsekFilter = ['==', ['to-string', ['get', 'odsek']], cleanId];
+        const tileFilter = ggoFilter ? ['all', odsekFilter, ggoFilter] : odsekFilter;
         const allFeatures = map.querySourceFeatures('odseki', {
             sourceLayer: 'odseki_map_ggo_gge',
-            filter: ['==', ['to-string', ['get', 'odsek']], cleanId]
+            filter: tileFilter
         });
         let bbox = [Infinity, Infinity, -Infinity, -Infinity];
         for (const f of allFeatures) {
@@ -1241,9 +1248,14 @@ map.on('click', 'odseki-fill', (event) => {
             setHighlight(clickedOdsek, fallbackGgoName);
             _updateZoomVisibility(GGE_TO_ODSEK_ZOOM);
             {
+                const ggoFilter = fallbackGgoName
+                    ? ['==', ['to-string', ['get', 'ggo_naziv']], fallbackGgoName]
+                    : null;
+                const odsekFilter = ['==', ['to-string', ['get', 'odsek']], clickedOdsek];
+                const tileFilter = ggoFilter ? ['all', odsekFilter, ggoFilter] : odsekFilter;
                 const allFeatures = map.querySourceFeatures('odseki', {
                     sourceLayer: 'odseki_map_ggo_gge',
-                    filter: ['==', ['to-string', ['get', 'odsek']], clickedOdsek]
+                    filter: tileFilter
                 });
                 let bbox = [Infinity, Infinity, -Infinity, -Infinity];
                 for (const f of allFeatures) {
