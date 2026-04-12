@@ -827,6 +827,7 @@ class TileHandler(BaseHTTPRequestHandler):
                 if tile_data[:2] == b'\x1f\x8b':
                     self.send_header('Content-Encoding', 'gzip')
                 self.send_header('Access-Control-Allow-Origin', '*')
+                self.send_header('Cache-Control', 'public, max-age=3600')
                 self.end_headers()
                 try:
                     self.wfile.write(tile_data)

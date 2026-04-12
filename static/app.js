@@ -134,18 +134,6 @@ const map = new maplibregl.Map({
                 }
             },
             {
-                id: 'gge-selected-outline',
-                type: 'line',
-                source: 'gge',
-                'source-layer': 'gge_maps',
-                filter: ['==', ['get', 'gge_naziv'], ''],
-                paint: {
-                    'line-color': '#60cdee',
-                    'line-width': 2.5,
-                    'line-opacity': 1
-                }
-            },
-            {
                 id: 'slovenija-outline',
                 type: 'line',
                 source: 'slovenija',
@@ -166,6 +154,18 @@ const map = new maplibregl.Map({
                     'line-width': 2.5,
                     'line-opacity': 0.65,
                     'line-blur': 1.5
+                }
+            },
+            {
+                id: 'gge-selected-outline',
+                type: 'line',
+                source: 'gge',
+                'source-layer': 'gge_maps',
+                filter: ['==', ['get', 'gge_naziv'], ''],
+                paint: {
+                    'line-color': '#60cdee',
+                    'line-width': 2.5,
+                    'line-opacity': 1
                 }
             },
             {
@@ -537,6 +537,29 @@ function coordinatesBbox(coords, acc) {
         acc = coordinatesBbox(item, acc);
     }
     return acc;
+}
+
+/**
+ * Pre-fetch odseki vector tiles for a bbox at the given zoom level into the browser HTTP cache.
+ * MapLibre will then get cache hits when it requests the same URLs during/after animation.
+ */
+function prefetchOdsekiTiles(bbox, zoom) {
+    const [west, south, east, north] = bbox;
+    const n = 1 << zoom;
+    const x1 = Math.floor((west  + 180) / 360 * n);
+    const x2 = Math.floor((east  + 180) / 360 * n);
+    // XYZ tile y: north→smaller y, south→larger y
+    const toTileY = (lat) => {
+        const s = Math.sin(lat * Math.PI / 180);
+        return Math.floor((0.5 - Math.log((1 + s) / (1 - s)) / (4 * Math.PI)) * n);
+    };
+    const y1 = toTileY(north);
+    const y2 = toTileY(south);
+    for (let x = x1; x <= x2; x++) {
+        for (let y = y1; y <= y2; y++) {
+            fetch(`/tiles/${zoom}/${x}/${y}`, { priority: 'low' }).catch(() => {});
+        }
+    }
 }
 
 /** Compute bbox directly from a GeoJSON geometry object. */
@@ -1138,6 +1161,7 @@ map.on('click', 'gge-fill', (event) => {
     const cam = map.cameraForBounds(bounds, { padding: 50, maxZoom: 14 });
     const targetZoom = Math.max((cam?.zoom ?? GGE_TO_ODSEK_ZOOM), GGE_TO_ODSEK_ZOOM);
     _updateZoomVisibility(targetZoom);
+    prefetchOdsekiTiles(bbox, Math.floor(targetZoom)); // pre-warm browser HTTP cache before animation
     map.flyTo({ center: cam?.center ?? [(bbox[0]+bbox[2])/2, (bbox[1]+bbox[3])/2], zoom: targetZoom, duration: ANIM.manual });
 });
 
