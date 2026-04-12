@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-Simple MBTiles viewer using MapLibre GL JS.
-Run with: python3 view_mbtiles.py
-Then open http://localhost:8000 in your browser.x
+MBTiles viewer using MapLibre GL JS.
+Run with: python3 run_web_server.py
+Then open http://localhost:8000 in your browser.
 """
 
 import re
@@ -587,7 +587,7 @@ def load_gge_area_data():
                 if gge and area > 0:
                     GGE_AREA[gge] = area
         total_ha = sum(GGE_AREA.values())
-        print(f"Loaded {len(GGE_AREA)} GGE areas from {GGE_DATA_PATH.name} (total {total_ha:,.0f} ha)")
+        print(f"Loaded {len(GGE_AREA)} GGE areas from {GGE_DATA_PATH.name}")
     except Exception as e:
         print(f"WARNING: Failed to load GGE area data from {GGE_DATA_PATH}: {e}")
 
@@ -694,7 +694,7 @@ def load_heatmap_data():
             else:
                 no_area += 1
     if no_area:
-        print(f"  WARNING: {no_area} entries had no area data — kept as absolute fallback")
+        print(f"  WARNING: {no_area} entries have no area data — kept as absolute fallback")
 
     HEATMAP_MONTHS = sorted(raw.keys())
 
@@ -723,8 +723,7 @@ def load_heatmap_data():
     print(
         f"Heatmap loaded: {len(HEATMAP_MONTHS)} months "
         f"(forecast from {FORECAST_START_MONTH or 'n/a'}), "
-        f"{sum(len(v) for v in HEATMAP_BY_MONTH.values())} non-zero entries, "
-        f"breaks (m³/ha)={[round(b, 4) for b in HEATMAP_NZ_BREAKS]}"
+        f"{sum(len(v) for v in HEATMAP_BY_MONTH.values())} non-zero entries"
     )
 
 
