@@ -1,6 +1,10 @@
 const SLOVENIA_CENTER = [14.9955, 46.1512];
 const INITIAL_ZOOM = 8;
 
+// Zoom level at which GGE coloring fades out and individual odsek coloring takes over.
+// Increase to keep GGE visible longer when zooming in; decrease to switch earlier.
+const GGE_TO_ODSEK_ZOOM = 11;
+
 // Animation speed preset. Choose one: ANIM_SLOW, ANIM_NORMAL, ANIM_FAST
 const ANIM_SLOW   = { reset:  3600, panel:  3900, manual:  1700, sweep:  640 };
 const ANIM_NORMAL   = { reset: 1800, panel: 2800, manual: 1200, sweep: 450 };
@@ -55,7 +59,13 @@ const map = new maplibregl.Map({
             odseki: {
                 type: 'vector',
                 tiles: [TILE_URL],
-                minzoom: 8,
+                minzoom: 9,
+                maxzoom: 14
+            },
+            gge: {
+                type: 'vector',
+                tiles: [`${window.location.origin}/gge-tiles/{z}/{x}/{y}`],
+                minzoom: 0,
                 maxzoom: 14
             },
             ggo: {
@@ -78,10 +88,23 @@ const map = new maplibregl.Map({
                 source: 'satellite'
             },
             {
+                id: 'gge-fill',
+                type: 'fill',
+                source: 'gge',
+                'source-layer': 'gge_maps',
+                layout: { visibility: INITIAL_ZOOM < GGE_TO_ODSEK_ZOOM ? 'visible' : 'none' },
+                paint: {
+                    'fill-color': COLOR_ODSEKI_FILL,
+                    'fill-color-transition': { duration: 0, delay: 0 },
+                    'fill-opacity': 0.55
+                }
+            },
+            {
                 id: 'odseki-fill',
                 type: 'fill',
                 source: 'odseki',
-                'source-layer': 'odsek',
+                'source-layer': 'odseki_map_ggo_gge',
+                layout: { visibility: INITIAL_ZOOM >= GGE_TO_ODSEK_ZOOM ? 'visible' : 'none' },
                 paint: {
                     'fill-color': COLOR_ODSEKI_FILL,
                     'fill-color-transition': { duration: 0, delay: 0 },
@@ -92,7 +115,7 @@ const map = new maplibregl.Map({
                 id: 'odseki-outline',
                 type: 'line',
                 source: 'odseki',
-                'source-layer': 'odsek',
+                'source-layer': 'odseki_map_ggo_gge',
                 paint: {
                     'line-color': COLOR_ODSEKI_BORDER,
                     'line-width': 0.6,
@@ -126,7 +149,7 @@ const map = new maplibregl.Map({
                 id: 'odseki-selected-fill',
                 type: 'fill',
                 source: 'odseki',
-                'source-layer': 'odsek',
+                'source-layer': 'odseki_map_ggo_gge',
                 filter: ['==', ['get', 'odsek'], ''],
                 paint: {
                     'fill-color': '#2563eb',
@@ -137,7 +160,7 @@ const map = new maplibregl.Map({
                 id: 'odseki-selected-outline',
                 type: 'line',
                 source: 'odseki',
-                'source-layer': 'odsek',
+                'source-layer': 'odseki_map_ggo_gge',
                 filter: ['==', ['get', 'odsek'], ''],
                 paint: {
                     'line-color': '#2563eb',
@@ -261,6 +284,7 @@ const heatmapInfoEl = document.getElementById('posek-info');
 let heatmapMonths = [];
 let forecastStartMonth = '';
 const heatmapCache = new Map();
+const ggeCache = new Map();
 const HEATMAP_CACHE_LIMIT = 30;
 
 // Trenutno izbran odsek (za posodabljanje poseka ob spremembi meseca)
@@ -336,11 +360,10 @@ function currentMonthString() {
     return heatmapMonths[idx];
 }
 
-function buildHeatmapExpression(buckets) {
-    // Tiles vsebujejo samo lastnost 'odsek' — ujemamo direktno po odsek_id.
-    const args = ['match', ['to-string', ['get', 'odsek']]];
-    for (const [odsek, bucket] of Object.entries(buckets)) {
-        args.push(odsek, HEATMAP_COLORS[bucket] ?? HEATMAP_COLORS[0]);
+function buildHeatmapExpression(buckets, key = 'odsek') {
+    const args = ['match', ['to-string', ['get', key]]];
+    for (const [id, bucket] of Object.entries(buckets)) {
+        args.push(id, HEATMAP_COLORS[bucket] ?? HEATMAP_COLORS[0]);
     }
     args.push(HEATMAP_COLORS[0]); // privzeto: ni aktivnosti
     return args;
@@ -382,6 +405,26 @@ async function applyMonthColor() {
     }
     if (selectedOdsekId) {
         fetchAndShowHeatmapValue(selectedOdsekId, m, selectedGgoName()).catch(() => {});
+    }
+
+    // GGE coloring — fetch and apply regardless of current zoom so it's ready when switching
+    let ggeBuckets = ggeCache.get(m);
+    if (!ggeBuckets) {
+        try {
+            const ggeResp = await fetch(`/api/heatmap/gge?month=${encodeURIComponent(m)}`);
+            if (ggeResp.ok) {
+                ggeBuckets = await ggeResp.json();
+                if (ggeCache.size >= HEATMAP_CACHE_LIMIT) {
+                    ggeCache.delete(ggeCache.keys().next().value);
+                }
+                ggeCache.set(m, ggeBuckets);
+            }
+        } catch (e) {
+            console.error('GGE heatmap fetch failed:', m, e);
+        }
+    }
+    if (ggeBuckets && map.getLayer('gge-fill')) {
+        map.setPaintProperty('gge-fill', 'fill-color', buildHeatmapExpression(ggeBuckets, 'gge_naziv'));
     }
 }
 
@@ -956,6 +999,20 @@ map.on('load', () => {
 
     initHeatmap().catch(console.error);
 });
+
+function _updateZoomVisibility() {
+    const zoom = map.getZoom();
+    const showGGE = zoom < GGE_TO_ODSEK_ZOOM;
+    if (map.getLayer('gge-fill')) {
+        map.setLayoutProperty('gge-fill',      'visibility', showGGE ? 'visible' : 'none');
+    }
+    if (map.getLayer('odseki-fill')) {
+        map.setLayoutProperty('odseki-fill',    'visibility', showGGE ? 'none' : 'visible');
+        map.setLayoutProperty('odseki-outline', 'visibility', showGGE ? 'none' : 'visible');
+    }
+}
+
+map.on('zoomend', _updateZoomVisibility);
 
 let _colorDebounce = null;
 

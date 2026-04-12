@@ -10,9 +10,10 @@ import os
 import sys
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
-MBTILES_FILE = 'data/odseki_vector_map.mbtiles'
-GGO_MBTILES_FILE = 'data/ggo_vector_map.mbtiles'
-SLO_MBTILES_FILE = 'data/slovenija_vector_map.mbtiles'
+ODSEKI_MBTILES_FILE = 'data/vector_map_odseki.mbtiles'
+GGO_MBTILES_FILE    = 'data/vector_map_ggo.mbtiles'
+GGE_MBTILES_FILE    = 'data/vector_map_gge.mbtiles'
+SLO_MBTILES_FILE    = 'data/vector_map_slovenia.mbtiles'
 PORT = 8000
 
 import csv
@@ -28,8 +29,11 @@ STATIC_DIR = BASE_DIR / 'static'
 
 # Easy-to-change location and file name for odsek attribute data.
 ODSEKI_DATA_DIR = BASE_DIR / "data"
-ODSEKI_DATA_FILENAME = 'odseki_nazivi.csv'
+ODSEKI_DATA_FILENAME = 'odseki.csv'
 ODSEKI_DATA_PATH = ODSEKI_DATA_DIR / ODSEKI_DATA_FILENAME
+
+# GGE area data — used to normalize heatmap values per GGE (m³/ha).
+GGE_DATA_PATH = BASE_DIR / 'data' / 'gge.csv'
 
 # Heatmap source files — change these to point to different CSVs if needed.
 HEATMAP_PAST_DATA_PATH   = BASE_DIR / 'data' / 'heatmap_past_data.csv'
@@ -60,10 +64,20 @@ GGO_CODE_TO_NAZIV = {
 # Reverse of GGO_CODE_TO_NAZIV — used when loading odseki_nazivi for area lookup
 GGO_NAZIV_TO_CODE = {v: k for k, v in GGO_CODE_TO_NAZIV.items()}
 
-# Heatmap bucket thresholds for relative posek (m³/ha).
-# Set to None to auto-compute from data quantiles (recommended).
-# Set to a list of exactly 3 values to use fixed thresholds, e.g. [0.5, 2.0, 5.0].
-HEATMAP_CUSTOM_BREAKS = None
+# Bucket break points (m³/ha/month) for odsek-level coloring.
+# Bucket 0 = no data, 1 = low, 2 = moderate, 3 = high, 4 = very high.
+# Based on historical data distribution (Q25≈0.26, Q50≈0.71, Q75≈1.90 across all months).
+# Tune upward to show only the most active odseki in colour; downward to reveal more detail.
+HEATMAP_BREAKS = [0.25, 0.7, 2.0]
+
+# Bucket break points (m³/ha/month) for GGE-level coloring.
+# GGE area denominator comes from gge.csv (full GGE polygon area, not just odsek sum).
+# Distribution across all months/GGEs:
+#   Q10 = 0.001  Q25 = 0.004  Q50 = 0.013  Q75 = 0.042  Q90 = 0.116  max ≈ 14
+# Seasonal pattern: winter Q75 ≈ 0.014, autumn Q75 ≈ 0.091
+# 2016 was the highest-activity year: Q75 = 0.141, Q90 = 0.379
+# Breaks chosen to show winter (mostly bucket 1) vs autumn (bucket 2-3) vs 2016 peaks (bucket 4).
+GGE_HEATMAP_BREAKS = [0.02, 0.03, 0.12]
 
 # Easy-to-change list of columns shown in the left panel.
 ODSEKI_FIELDS = [
@@ -97,6 +111,15 @@ HEATMAP_NZ_BREAKS = []        # 3 break points for non-zero relative-value bucke
 HEATMAP_BY_MONTH = {}         # {leto_mesec: {odsek_id: bucket 1–4}} (only non-zero, relative)
 HEATMAP_ABS_BY_MONTH = {}     # {leto_mesec: {odsek_id: absolute target}} (for detail panel)
 FORECAST_START_MONTH = ''     # first month from the future predictions file
+
+# GGE heatmap (populated by _load_or_build_gge_cache after load_heatmap_data)
+GGE_HEATMAP_BY_MONTH = {}    # {leto_mesec: {gge_naziv: bucket 1–4}}
+GGE_HEATMAP_CACHE_PATH = BASE_DIR / 'data' / 'gge_heatmap_cache.json'
+_GGE_CACHE_VERSION = 5
+
+# GGE lookup tables (populated by load_odseki_data and load_gge_area_data)
+ODSEK_TO_GGE = {}            # {odsek_id: gge_naziv}
+GGE_AREA = {}                # {gge_naziv: area_ha} — loaded from gge.csv
 
 
 # ---------------------------------------------------------------------------
@@ -228,8 +251,10 @@ def _decode_layer(data: bytes):
                 if ki < len(keys) and vi < len(raw_vals):
                     props[keys[ki]] = raw_vals[vi]
 
-        bbox = _decode_geom_bbox(_unpack_varints(geom_raw)) if geom_raw else None
-        features.append({'props': props, 'bbox': bbox, 'extent': extent})
+        geom_ints = _unpack_varints(geom_raw) if geom_raw else []
+        bbox = _decode_geom_bbox(geom_ints) if geom_ints else None
+        features.append({'props': props, 'bbox': bbox, 'extent': extent,
+                         '_geom_raw': geom_raw})
 
     return name, features
 
@@ -286,7 +311,7 @@ def build_odsek_bbox_index(mbtiles_file: str, zoom: int = 11) -> dict:
         except Exception:
             continue
         for layer_name, features in layers:
-            if layer_name != 'odsek':
+            if layer_name != 'odseki_map_ggo_gge':
                 continue
             for feat in features:
                 props = feat['props']
@@ -311,6 +336,113 @@ def build_odsek_bbox_index(mbtiles_file: str, zoom: int = 11) -> dict:
                     e[3] = max(e[3], lat_n)
 
     return index
+
+
+def build_gge_area_index(mbtiles_file: str, zoom: int = 11) -> dict:
+    """Decode GGE polygon geometries and return {gge_naziv: area_ha}.
+
+    Uses the Shoelace formula on lat/lon coordinates with a flat-earth approximation
+    (error < 0.1 % for Slovenia's scale).  Polygon pieces clipped at tile boundaries
+    sum correctly to the true total area because each clipped piece is a valid polygon
+    whose areas tile-decompose the original.
+    """
+    R_m = 6371000.0  # Earth radius in metres
+    d2r = math.pi / 180.0
+
+    def _ring_area_m2(pts_latlon, lat_mean):
+        """Signed Shoelace area in m² using flat-earth approximation."""
+        cos_lat = math.cos(lat_mean * d2r)
+        xs = [lon * cos_lat * R_m * d2r for _, lon in pts_latlon]
+        ys = [lat          * R_m * d2r for lat, _ in pts_latlon]
+        n = len(xs)
+        s = sum(xs[i] * ys[(i + 1) % n] - xs[(i + 1) % n] * ys[i] for i in range(n))
+        return s / 2.0  # signed: negative = exterior ring in y-down tile space
+
+    area_accum = defaultdict(float)
+
+    try:
+        conn = sqlite3.connect(mbtiles_file)
+        cur  = conn.cursor()
+        cur.execute(
+            'SELECT tile_column, tile_row, tile_data FROM tiles WHERE zoom_level=?', (zoom,)
+        )
+        rows = cur.fetchall()
+        conn.close()
+    except Exception as e:
+        print(f'WARNING: GGE area index query failed: {e}')
+        return {}
+
+    for x_tile, y_tms, tile_data in rows:
+        if not tile_data:
+            continue
+        try:
+            layers = _decode_tile(bytes(tile_data))
+        except Exception:
+            continue
+
+        n_tiles = 1 << zoom
+        y_xyz   = n_tiles - 1 - y_tms
+
+        for layer_name, features in layers:
+            if layer_name != 'gge_maps':
+                continue
+            for feat in features:
+                gge = str(feat['props'].get('gge_naziv', '')).strip()
+                if not gge or feat['bbox'] is None:
+                    continue
+
+                geom_raw = feat.get('_geom_raw')
+                if geom_raw is None:
+                    continue
+
+                extent = feat['extent']
+                geom_ints = _unpack_varints(geom_raw)
+
+                # Walk geometry commands and collect rings
+                rings = []
+                ring  = []
+                cx = cy = 0
+                i   = 0
+                while i < len(geom_ints):
+                    cmd        = geom_ints[i]; i += 1
+                    cmd_id     = cmd & 0x7
+                    count      = cmd >> 3
+                    if cmd_id == 1:        # MoveTo — starts a new ring
+                        if ring:
+                            rings.append(ring)
+                        ring = []
+                        for _ in range(count):
+                            cx += _zigzag(geom_ints[i]); i += 1
+                            cy += _zigzag(geom_ints[i]); i += 1
+                            ring.append((cx, cy))
+                    elif cmd_id == 2:      # LineTo
+                        for _ in range(count):
+                            cx += _zigzag(geom_ints[i]); i += 1
+                            cy += _zigzag(geom_ints[i]); i += 1
+                            ring.append((cx, cy))
+                    elif cmd_id == 7:      # ClosePath
+                        if ring:
+                            rings.append(ring)
+                            ring = []
+                if ring:
+                    rings.append(ring)
+
+                # Convert rings to lat/lon and accumulate signed area
+                for r in rings:
+                    if len(r) < 3:
+                        continue
+                    pts = []
+                    for px, py in r:
+                        lon = (x_tile + px / extent) / n_tiles * 360.0 - 180.0
+                        lat = math.degrees(math.atan(math.sinh(
+                            math.pi * (1.0 - 2.0 * (y_xyz + py / extent) / n_tiles)
+                        )))
+                        pts.append((lat, lon))
+                    lat_mean = sum(p[0] for p in pts) / len(pts)
+                    area_accum[gge] += _ring_area_m2(pts, lat_mean)
+
+    # Signed areas: exterior rings are negative in y-down tile space → take abs of sum
+    return {gge: abs(signed_m2) / 10_000 for gge, signed_m2 in area_accum.items()}
 
 
 def _configure_csv_field_limit():
@@ -340,13 +472,15 @@ def _extract_ggo_code_from_odsek(odsek_id):
 
 
 def load_odseki_data():
-    global ODSEKI_BY_KEY, ODSEKI_BY_ODSEK, GGO_NAMES, GGO_OPTIONS, POVRSINA_BY_ODSEK
+    global ODSEKI_BY_KEY, ODSEKI_BY_ODSEK, GGO_NAMES, GGO_OPTIONS, POVRSINA_BY_ODSEK, \
+           ODSEK_TO_GGE
 
     ODSEKI_BY_KEY = {}
     ODSEKI_BY_ODSEK = defaultdict(list)
     GGO_NAMES = []
     GGO_OPTIONS = []
     POVRSINA_BY_ODSEK = {}
+    ODSEK_TO_GGE = {}
 
     _configure_csv_field_limit()
 
@@ -387,6 +521,11 @@ def load_odseki_data():
                 except ValueError:
                     pass
 
+                # GGE membership (odsek belongs to exactly one GGE)
+                gge = (record.get('gge_naziv') or '').strip()
+                if gge and odsek_id not in ODSEK_TO_GGE:
+                    ODSEK_TO_GGE[odsek_id] = gge
+
         # Average area across GGOs so coloring is consistent regardless of iteration order
         POVRSINA_BY_ODSEK = {oid: sum(vals) / len(vals) for oid, vals in _povrsina_accum.items()}
 
@@ -407,13 +546,27 @@ def load_odseki_data():
         print(f"WARNING: Failed to load odseki data from {ODSEKI_DATA_PATH}: {e}")
 
 
-def _nz_quantile_breaks(values):
-    """Return 3 break points at 25/50/75 percentiles of non-zero values."""
-    nz = sorted(v for v in values if v > 0)
-    n = len(nz)
-    if n < 3:
-        return [1.0, 10.0, 100.0]
-    return [nz[int(n * 0.25)], nz[int(n * 0.50)], nz[int(n * 0.75)]]
+def load_gge_area_data():
+    """Load GGE areas (ha) from gge.csv into GGE_AREA."""
+    global GGE_AREA
+    GGE_AREA = {}
+    if not GGE_DATA_PATH.exists():
+        print(f"WARNING: GGE area file not found: {GGE_DATA_PATH}")
+        return
+    try:
+        with GGE_DATA_PATH.open('r', encoding='utf-8-sig', newline='') as f:
+            for row in csv.DictReader(f):
+                gge = (row.get('gge_naziv') or '').strip()
+                try:
+                    area = float(row.get('povrsina') or 0)
+                except ValueError:
+                    area = 0.0
+                if gge and area > 0:
+                    GGE_AREA[gge] = area
+        total_ha = sum(GGE_AREA.values())
+        print(f"Loaded {len(GGE_AREA)} GGE areas from {GGE_DATA_PATH.name} (total {total_ha:,.0f} ha)")
+    except Exception as e:
+        print(f"WARNING: Failed to load GGE area data from {GGE_DATA_PATH}: {e}")
 
 
 def _assign_heatmap_bucket(target, nz_breaks):
@@ -532,13 +685,8 @@ def load_heatmap_data():
             abs_month[odsek] = round(rel * p if p > 0 else rel, 2)
         HEATMAP_ABS_BY_MONTH[month] = abs_month
 
-    all_relative = [v for month_data in raw.values() for v in month_data.values()]
-    if HEATMAP_CUSTOM_BREAKS and len(HEATMAP_CUSTOM_BREAKS) == 3:
-        HEATMAP_NZ_BREAKS = list(HEATMAP_CUSTOM_BREAKS)
-        print(f"  Using custom breaks: {HEATMAP_NZ_BREAKS}")
-    else:
-        HEATMAP_NZ_BREAKS = _nz_quantile_breaks(all_relative)
-    del all_relative
+    HEATMAP_NZ_BREAKS = list(HEATMAP_BREAKS)
+    print(f"  Breaks (m³/ha): {HEATMAP_NZ_BREAKS}")
 
     HEATMAP_BY_MONTH = {}
     for month, odsek_targets in raw.items():
@@ -557,6 +705,87 @@ def load_heatmap_data():
     )
 
 
+
+
+def _build_gge_heatmap():
+    """Aggregate absolute heatmap targets by GGE per month → relative posek → bucket.
+
+    Computes its own bucket breaks from GGE-level relative posek values, separate from
+    the odsek breaks. GGE values are averaged over larger areas so their distribution
+    is narrower — shared breaks with odsek would crush most GGEs into bucket 1.
+    Only odseki present in odseki.csv (with a known GGE and area) are counted.
+    """
+    # First pass: sum absolute targets per (gge, month) across all months
+    gge_relatives = {}   # {month: {gge: relative_posek}}
+    for month, abs_data in HEATMAP_ABS_BY_MONTH.items():
+        target_sum = defaultdict(float)
+        for odsek_id, target_abs in abs_data.items():
+            gge = ODSEK_TO_GGE.get(odsek_id)
+            if not gge:
+                continue
+            target_sum[gge] += target_abs
+        month_rel = {}
+        for gge, t in target_sum.items():
+            # Use GGE polygon area (from mbtiles geometry) as denominator.
+            # Falls back to summed odsek area if the GGE was not found in the geometry index.
+            area = GGE_AREA.get(gge, 0)
+            month_rel[gge] = t / area if area > 0 else t
+        gge_relatives[month] = month_rel
+
+    gge_breaks = list(GGE_HEATMAP_BREAKS)
+    print(f"  GGE breaks (m³/ha): {gge_breaks}")
+
+    # Second pass: assign buckets using GGE-specific breaks
+    gge_by_month = {}
+    for month, month_rel in gge_relatives.items():
+        buckets = {}
+        for gge, relative in month_rel.items():
+            b = _assign_heatmap_bucket(relative, gge_breaks)
+            if b > 0:
+                buckets[gge] = b
+        gge_by_month[month] = buckets
+    return gge_by_month
+
+
+def _load_or_build_gge_cache():
+    """Load GGE heatmap from cache if both heatmap source files are older than it.
+    Rebuilds and saves cache when sources are newer.
+    """
+    global GGE_HEATMAP_BY_MONTH
+
+    # Newest mtime among the source heatmap files
+    src_mtime = max(
+        os.path.getmtime(p) if p.exists() else 0
+        for p in (HEATMAP_PAST_DATA_PATH, HEATMAP_FUTURE_DATA_PATH)
+    )
+
+    if GGE_HEATMAP_CACHE_PATH.exists():
+        try:
+            cache_mtime = os.path.getmtime(GGE_HEATMAP_CACHE_PATH)
+            if cache_mtime >= src_mtime:
+                with GGE_HEATMAP_CACHE_PATH.open('r', encoding='utf-8') as f:
+                    raw = json.load(f)
+                if raw.get('_version') == _GGE_CACHE_VERSION:
+                    GGE_HEATMAP_BY_MONTH = {k: v for k, v in raw.items() if not k.startswith('_')}
+                    print(f"GGE heatmap loaded from cache ({len(GGE_HEATMAP_BY_MONTH)} months)")
+                    return
+                print("GGE cache version mismatch — rebuilding...")
+        except Exception as e:
+            print(f"GGE cache read failed ({e}) — rebuilding...")
+
+    print("Building GGE heatmap aggregation...")
+    GGE_HEATMAP_BY_MONTH = _build_gge_heatmap()
+    print(f"GGE heatmap built: {len(GGE_HEATMAP_BY_MONTH)} months, "
+          f"{sum(len(v) for v in GGE_HEATMAP_BY_MONTH.values())} non-zero GGE entries")
+
+    try:
+        out = dict(GGE_HEATMAP_BY_MONTH)
+        out['_version'] = _GGE_CACHE_VERSION
+        with GGE_HEATMAP_CACHE_PATH.open('w', encoding='utf-8') as f:
+            json.dump(out, f, ensure_ascii=False)
+        print(f"GGE heatmap cached to {GGE_HEATMAP_CACHE_PATH.name}")
+    except Exception as e:
+        print(f"WARNING: Could not write GGE cache: {e}")
 
 
 def _sanitize_static_path(request_path):
@@ -799,6 +1028,19 @@ class TileHandler(BaseHTTPRequestHandler):
             })
             return
 
+        if path == '/api/heatmap/gge':
+            query_map = parse_qs(parsed.query)
+            month = query_map.get('month', [''])[0].strip()
+            if not month:
+                self._send_json(400, {'error': 'Missing month parameter'})
+                return
+            buckets = GGE_HEATMAP_BY_MONTH.get(month)
+            if buckets is None:
+                self._send_json(404, {'error': f'No GGE heatmap data for {month}'})
+                return
+            self._send_json(200, buckets)
+            return
+
         if path.startswith('/slo-tiles/'):
             self._serve_mbtiles_tile(SLO_MBTILES_FILE, path)
             return
@@ -807,15 +1049,19 @@ class TileHandler(BaseHTTPRequestHandler):
             self._serve_mbtiles_tile(GGO_MBTILES_FILE, path)
             return
 
+        if path.startswith('/gge-tiles/'):
+            self._serve_mbtiles_tile(GGE_MBTILES_FILE, path)
+            return
+
         if path.startswith('/tiles/'):
-            self._serve_mbtiles_tile(MBTILES_FILE, path)
+            self._serve_mbtiles_tile(ODSEKI_MBTILES_FILE, path)
             return
 
         self._serve_static_file(path)
 
 
-# Increment this when the cache format or odsek normalisation logic changes.
-_BBOX_CACHE_VERSION = 2
+# Increment this when the cache format, layer name, or odsek normalisation logic changes.
+_BBOX_CACHE_VERSION = 3
 
 
 def _load_or_build_bbox_index(mbtiles_file: str, zoom: int = 11) -> dict:
@@ -859,9 +1105,9 @@ def _load_or_build_bbox_index(mbtiles_file: str, zoom: int = 11) -> dict:
 
 
 def main():
-    if not os.path.exists(MBTILES_FILE):
-        print(f"ERROR: '{MBTILES_FILE}' not found.")
-        print("Update the MBTILES_FILE variable at the top of the script.")
+    if not os.path.exists(ODSEKI_MBTILES_FILE):
+        print(f"ERROR: '{ODSEKI_MBTILES_FILE}' not found.")
+        print("Update the ODSEKI_MBTILES_FILE variable at the top of the script.")
         sys.exit(1)
 
     if not STATIC_DIR.exists():
@@ -870,10 +1116,12 @@ def main():
         sys.exit(1)
 
     load_odseki_data()
+    load_gge_area_data()
     load_heatmap_data()
+    _load_or_build_gge_cache()
 
     global ODSEK_BBOX, ODSEKI_BY_GGO
-    ODSEK_BBOX = _load_or_build_bbox_index(MBTILES_FILE, zoom=11)
+    ODSEK_BBOX = _load_or_build_bbox_index(ODSEKI_MBTILES_FILE, zoom=11)
 
     # Build suggestion index from mbtiles-derived segments
     by_ggo = defaultdict(list)
@@ -882,7 +1130,7 @@ def main():
     ODSEKI_BY_GGO = {ggo: sorted(ids, key=_odsek_sort_key) for ggo, ids in by_ggo.items()}
     print(f"Suggestion index: {sum(len(v) for v in ODSEKI_BY_GGO.values()):,} segments across {len(ODSEKI_BY_GGO)} GGO")
 
-    print(f"Serving {MBTILES_FILE}")
+    print(f"Serving {ODSEKI_MBTILES_FILE}")
     print(f"Serving static files from {STATIC_DIR}")
     print(f"Odseki data file: {ODSEKI_DATA_PATH}")
     print(f"Heatmap past data:   {HEATMAP_PAST_DATA_PATH}")
