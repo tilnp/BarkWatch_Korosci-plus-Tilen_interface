@@ -324,20 +324,17 @@ function normalize(v) {
     return String(v ?? '').trim();
 }
 
-/** Canonical internal form: spaces → zeros.  '01  1A' → '01001A' */
+/** Normalise an odsek ID for internal use: strip surrounding whitespace only.
+ *  Spaces inside the ID are a distinct character (not equal to '0') and must
+ *  be preserved exactly as they appear in the database. */
 function canonicalOdsekId(id) {
-    return String(id ?? '').trim().replace(/ /g, '0');
+    return String(id ?? '').trim();
 }
 
-/** Display form for UI and tile filters: leading zeros in the 3-digit sub-part → spaces.
- *  '01001A' → '01  1A',  '01056A' → '01 56A',  '02013' → '02 13' */
+/** Return the ID in the form used for UI display and tile filters.
+ *  Spaces inside odsek IDs are meaningful, so the ID is returned as-is. */
 function displayOdsekId(id) {
-    const s = String(id ?? '').trim();
-    const m = s.match(/^(\d{2})(\d{3})([A-Z]*)$/);
-    if (!m) return s;
-    const [, prefix, digits, suffix] = m;
-    const stripped = digits.replace(/^0+/, '') || '0';
-    return prefix + stripped.padStart(3, ' ') + suffix;
+    return String(id ?? '').trim();
 }
 
 function normalizeCode(v) {
@@ -887,51 +884,50 @@ function setHighlight(odsekId, ggoName) {
     if (!odsekId) { clearHighlight(); return; }
     const reqId = ++_highlightReqId;
 
+    // Step 1 — apply an odsek-only filter immediately so the highlight appears
+    // as soon as any tile with this odsek loads, regardless of GGO.
     const odsekFilter = ['==', ['to-string', ['get', 'odsek']], String(odsekId)];
     _applyFilter(odsekFilter);
 
     if (!ggoName) return;
 
-    const ggoCode  = ggoCodeByName.get(ggoName) || '';
-    const normCode = normalizeCode(ggoCode);           // '07'
+    // Step 2 — after the map finishes the fly-to animation and tiles are loaded,
+    // probe the actual tile features to find the exact stored field values.
+    // We use canonical comparison (spaces→zeros) when searching so that IDs
+    // like '10002' and '10  2' are treated as the same odsek, then narrow
+    // the filter to the correct GGO using the tile's own field values.
+    const canonical = String(odsekId).trim().replace(/ /g, '0');
 
     map.once('idle', () => {
-        if (reqId !== _highlightReqId) return; // a newer selection superseded this one
+        if (reqId !== _highlightReqId) return; // newer selection superseded this one
 
         const features = map.querySourceFeatures('odseki', { sourceLayer: 'odseki_map_ggo_gge' });
 
-        // Only look at features that already match the odsek ID (tiles use display/space form).
-        const candidates = features.filter(
-            f => normalize(String(f.properties?.odsek ?? '')) === normalize(odsekId)
-        );
-        if (!candidates.length) return; // tiles not loaded — keep odsek-only filter
+        // Match by canonical odsek ID so both '10002' and '10  2' resolve correctly.
+        const candidates = features.filter(f => {
+            const tileOdsek = String(f.properties?.odsek ?? '').trim();
+            return tileOdsek.replace(/ /g, '0') === canonical;
+        });
+        if (!candidates.length) return; // tiles not yet loaded — keep odsek-only filter
 
-        // 1. Try GGO name fields: compare tile value against the display name.
+        // Find the candidate whose GGO matches the requested GGO.
+        const normGgo = normalize(ggoName);
         for (const key of ['ggo_naziv', 'ggo_name']) {
             const hit = candidates.find(
-                f => normalize(String(f.properties?.[key] ?? '')) === normalize(ggoName)
+                f => normalize(String(f.properties?.[key] ?? '')) === normGgo
             );
             if (hit) {
-                const tileVal = String(hit.properties[key]);
-                _applyFilter(['all', odsekFilter, ['==', ['to-string', ['get', key]], tileVal]]);
+                // Use the tile's exact stored values to build the filter.
+                const tileOdsekVal = String(hit.properties.odsek);
+                const tileGgoVal   = String(hit.properties[key]);
+                _applyFilter(['all',
+                    ['==', ['to-string', ['get', 'odsek']], tileOdsekVal],
+                    ['==', ['to-string', ['get', key]],     tileGgoVal]
+                ]);
                 return;
             }
         }
-
-        // 2. Try GGO code fields: compare normalised tile code against the GGO code.
-        for (const key of ['ggo', 'ggo_id', 'ggo_sifra', 'ggo_code']) {
-            const hit = candidates.find(f => {
-                const v = String(f.properties?.[key] ?? '');
-                return normalizeCode(v) === normCode && normCode !== '';
-            });
-            if (hit) {
-                const tileVal = String(hit.properties[key]);
-                _applyFilter(['all', odsekFilter, ['==', ['to-string', ['get', key]], tileVal]]);
-                return;
-            }
-        }
-
-        // No GGO field found in tiles — keep the odsek-only filter.
+        // GGO field not found in loaded tiles — keep the odsek-only filter.
     });
 }
 

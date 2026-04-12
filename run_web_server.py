@@ -5,7 +5,6 @@ Run with: python3 run_web_server.py
 Then open http://localhost:8000 in your browser.
 """
 
-import re
 import sqlite3
 import os
 import sys
@@ -320,8 +319,8 @@ def build_odsek_bbox_index(mbtiles_file: str, zoom: int = 11) -> dict:
                 raw_bbox = feat['bbox']
                 extent = feat['extent']
                 ggo = str(props.get('ggo_naziv', '')).strip()
-                # Normalize to canonical form — mbtiles stores e.g. "01 58A", canonical is "01058A"
-                odsek = _normalize_odsek_id(str(props.get('odsek', '')))
+                odsek_raw = str(props.get('odsek', '')).strip()   # exact string stored in tile
+                odsek     = _normalize_odsek_id(odsek_raw)        # canonical key (spaces→zeros)
                 if not ggo or not odsek or raw_bbox is None:
                     continue
                 mn_x, mn_y, mx_x, mx_y = raw_bbox
@@ -329,13 +328,16 @@ def build_odsek_bbox_index(mbtiles_file: str, zoom: int = 11) -> dict:
                 lon_e, lat_s = _px_to_geo(zoom, x_tile, y_tms, mx_x, mx_y, extent)
                 key = (ggo, odsek)
                 if key not in index:
-                    index[key] = [lon_w, lat_s, lon_e, lat_n]
+                    # Store [W, S, E, N, actual_tile_id] — tile_id is used for the
+                    # suggestion index and highlight filter so they match the tile exactly.
+                    index[key] = [lon_w, lat_s, lon_e, lat_n, odsek_raw]
                 else:
                     e = index[key]
                     e[0] = min(e[0], lon_w)
                     e[1] = min(e[1], lat_s)
                     e[2] = max(e[2], lon_e)
                     e[3] = max(e[3], lat_n)
+                    # e[4] (odsek_raw) is kept from first occurrence — consistent per GGO
 
     return index
 
@@ -463,17 +465,6 @@ def _normalize_odsek_id(odsek_id):
     return (odsek_id or '').strip().replace(' ', '0')
 
 
-_ODSEK_DISPLAY_RE = re.compile(r'^(\d{2})(\d{3})([A-Z]*)$')
-
-def _odsek_display(odsek_id):
-    """Display form: leading zeros in the 3-digit sub-part → spaces.  '01001A' → '01  1A'."""
-    m = _ODSEK_DISPLAY_RE.match(odsek_id or '')
-    if m:
-        prefix, digits, suffix = m.groups()
-        stripped = digits.lstrip('0') or '0'
-        padded   = stripped.rjust(3)          # pad with spaces to width 3
-        return f'{prefix}{padded}{suffix}'
-    return odsek_id
 
 
 def _odsek_sort_key(odsek_id):
@@ -967,15 +958,16 @@ class TileHandler(BaseHTTPRequestHandler):
 
         if path == '/api/odseki/suggest':
             query_map = parse_qs(parsed.query)
-            # Normalize query so "01 5" and "01050" both match "01050…"
-            query = _normalize_odsek_id(query_map.get('q', [''])[0]).lower()
+            # Keep query exactly as typed — spaces are a distinct character in odsek IDs,
+            # not interchangeable with zeros. The index stores display-form IDs (with spaces).
+            query = query_map.get('q', [''])[0].strip().lower()
             ggo_name = query_map.get('ggo', [''])[0].strip()
 
             if not ggo_name or not query:
                 suggestions = []
             else:
                 suggestions = [
-                    _odsek_display(odsek_id)   # return display form (spaces)
+                    odsek_id   # already in display form (spaces)
                     for odsek_id in ODSEKI_BY_GGO.get(ggo_name, [])
                     if odsek_id.lower().startswith(query)
                 ][:SUGGESTION_LIMIT]
@@ -1144,7 +1136,7 @@ class TileHandler(BaseHTTPRequestHandler):
 
 
 # Increment this when the cache format, layer name, or odsek normalisation logic changes.
-_BBOX_CACHE_VERSION = 4
+_BBOX_CACHE_VERSION = 5
 
 
 def _load_or_build_bbox_index(mbtiles_file: str, zoom: int = 11) -> dict:
@@ -1206,10 +1198,13 @@ def main():
     global ODSEK_BBOX, ODSEKI_BY_GGO
     ODSEK_BBOX = _load_or_build_bbox_index(ODSEKI_MBTILES_FILE, zoom=11)
 
-    # Build suggestion index from mbtiles-derived segments
+    # Build suggestion index from mbtiles-derived segments.
+    # Use the actual tile odsek ID (bbox[4]) so suggestions exactly match what the tile stores,
+    # and the MapLibre highlight filter can match without any conversion.
     by_ggo = defaultdict(list)
-    for (ggo_naziv, odsek_id) in ODSEK_BBOX:
-        by_ggo[ggo_naziv].append(odsek_id)
+    for (ggo_naziv, _), bbox_val in ODSEK_BBOX.items():
+        tile_id = bbox_val[4]
+        by_ggo[ggo_naziv].append(tile_id)
     ODSEKI_BY_GGO = {ggo: sorted(ids, key=_odsek_sort_key) for ggo, ids in by_ggo.items()}
     print(f"Suggestion index: {sum(len(v) for v in ODSEKI_BY_GGO.values()):,} segments across {len(ODSEKI_BY_GGO)} GGO")
 
