@@ -324,6 +324,22 @@ function normalize(v) {
     return String(v ?? '').trim();
 }
 
+/** Canonical internal form: spaces → zeros.  '01  1A' → '01001A' */
+function canonicalOdsekId(id) {
+    return String(id ?? '').trim().replace(/ /g, '0');
+}
+
+/** Display form for UI and tile filters: leading zeros in the 3-digit sub-part → spaces.
+ *  '01001A' → '01  1A',  '01056A' → '01 56A',  '02013' → '02 13' */
+function displayOdsekId(id) {
+    const s = String(id ?? '').trim();
+    const m = s.match(/^(\d{2})(\d{3})([A-Z]*)$/);
+    if (!m) return s;
+    const [, prefix, digits, suffix] = m;
+    const stripped = digits.replace(/^0+/, '') || '0';
+    return prefix + stripped.padStart(3, ' ') + suffix;
+}
+
 function normalizeCode(v) {
     const s = normalize(v);
     if (!s) return '';
@@ -625,8 +641,10 @@ function detectDiscriminator(features, ggoCode, ggoName) {
 function findBoundsInLoadedTiles(odsekId, ggoCode, ggoName) {
     if (!map.isStyleLoaded()) return null;
 
+    // Tiles store odsek IDs in display form (spaces); compare against display form.
+    const displayId = displayOdsekId(canonicalOdsekId(odsekId));
     const features = map.querySourceFeatures('odseki', { sourceLayer: 'odseki_map_ggo_gge' });
-    const odsekCandidates = features.filter((feature) => normalize(feature?.properties?.odsek) === normalize(odsekId));
+    const odsekCandidates = features.filter((feature) => normalize(feature?.properties?.odsek) === normalize(displayId));
     if (!odsekCandidates.length) return null;
 
     const discriminator = detectDiscriminator(odsekCandidates, ggoCode, ggoName);
@@ -882,9 +900,9 @@ function setHighlight(odsekId, ggoName) {
 
         const features = map.querySourceFeatures('odseki', { sourceLayer: 'odseki_map_ggo_gge' });
 
-        // Only look at features that already match the odsek ID.
+        // Only look at features that already match the odsek ID (tiles use display/space form).
         const candidates = features.filter(
-            f => String(f.properties?.odsek ?? '') === String(odsekId)
+            f => normalize(String(f.properties?.odsek ?? '')) === normalize(odsekId)
         );
         if (!candidates.length) return; // tiles not loaded — keep odsek-only filter
 
@@ -923,8 +941,10 @@ function setHighlight(odsekId, ggoName) {
  * @param {string|null} ggoNameOverride  - GGO name detected from tile props (overrides dropdown)
  */
 async function selectOdsek(odsekId, source = 'panel', ggoNameOverride = null) {
-    const cleanId = String(odsekId || '').trim();
+    // Canonical form (zeros) for API lookups; display form (spaces) for tile filters and UI.
+    const cleanId = canonicalOdsekId(odsekId);
     if (!cleanId) return;
+    const displayId = displayOdsekId(cleanId);
 
     // Prefer the GGO detected from the tile feature; fall back to the dropdown selection.
     const ggoName = ggoNameOverride || selectedGgoName();
@@ -933,24 +953,25 @@ async function selectOdsek(odsekId, source = 'panel', ggoNameOverride = null) {
         return;
     }
 
-    searchInput.value = cleanId;
+    searchInput.value = displayId;
     suggestionsEl.innerHTML = '';
 
     const payload = await fetchOdsekByKey(ggoName, cleanId);
     if (!payload || !payload.data) {
-        selectedOdsekEl.textContent = `Odsek ${cleanId} v GGO '${ggoName}' ni najden.`;
+        selectedOdsekEl.textContent = `Odsek ${displayId} v GGO '${ggoName}' ni najden.`;
         detailsEl.classList.add('empty');
         detailsEl.textContent = 'Ni podatkov za izbran odsek.';
         return;
     }
 
-    selectedOdsekEl.textContent = `Izbran odsek: ${cleanId} | GGO: ${ggoName}`;
+    selectedOdsekEl.textContent = `Izbran odsek: ${displayId} | GGO: ${ggoName}`;
     selectedOdsekId = cleanId;
     renderDetailsTable(payload.data);
     fetchAndShowHeatmapValue(cleanId, currentMonthString(), ggoName).catch(() => {});
 
     // Apply the highlight filter immediately — MapLibre renders it correctly as tiles load.
-    setHighlight(cleanId, ggoName);
+    // Tiles store IDs with spaces, so pass the display form to setHighlight.
+    setHighlight(displayId, ggoName);
     setGgeHighlight(String(payload.data.gge_naziv || '').trim());
 
     const duration = source === 'panel' ? ANIM.panel : ANIM.manual;
@@ -959,11 +980,12 @@ async function selectOdsek(odsekId, source = 'panel', ggoNameOverride = null) {
     _updateZoomVisibility(GGE_TO_ODSEK_ZOOM);
 
     // 1. Query all tile pieces of this odsek (filtered by GGO+odsek pair) to get the true combined bbox.
+    //    Tiles store odsek IDs with spaces — use displayId for the tile filter.
     {
         const ggoFilter = ggoName
             ? ['==', ['to-string', ['get', 'ggo_naziv']], ggoName]
             : null;
-        const odsekFilter = ['==', ['to-string', ['get', 'odsek']], cleanId];
+        const odsekFilter = ['==', ['to-string', ['get', 'odsek']], displayId];
         const tileFilter = ggoFilter ? ['all', odsekFilter, ggoFilter] : odsekFilter;
         const allFeatures = map.querySourceFeatures('odseki', {
             sourceLayer: 'odseki_map_ggo_gge',
@@ -989,11 +1011,11 @@ async function selectOdsek(odsekId, source = 'panel', ggoNameOverride = null) {
         return;
     }
 
-    // 3. Fallback: tile sweep.
+    // 3. Fallback: tile sweep — tiles use display form (spaces).
     const ggoCode = String(payload.key?.ggo_code || selectedGgoCode() || '').trim();
-    const moved = await locateOdsek(cleanId, ggoCode, ggoName, source);
+    const moved = await locateOdsek(displayId, ggoCode, ggoName, source);
     if (!moved) {
-        console.warn('Odsek location could not be resolved:', cleanId, ggoName);
+        console.warn('Odsek location could not be resolved:', displayId, ggoName);
     }
 }
 
@@ -1235,16 +1257,18 @@ map.on('click', 'odseki-fill', (event) => {
 
         if (payload.data) {
             const fallbackGgoName = String(payload.data.ggo_naziv || '').trim();
+            // clickedOdsek is in display form (from tile props); canonical is needed for API calls.
+            const canonicalClicked = canonicalOdsekId(clickedOdsek);
             // Sync dropdown and search bar.
             if (fallbackGgoName && ggoCodeByName.has(fallbackGgoName)) {
                 ggoSelect.value = fallbackGgoName;
                 setSearchEnabled(true);
             }
-            searchInput.value = clickedOdsek;
+            searchInput.value = clickedOdsek;   // display form (spaces)
             selectedOdsekEl.textContent = `Izbran odsek: ${clickedOdsek} | GGO: ${fallbackGgoName}`;
-            selectedOdsekId = clickedOdsek;
+            selectedOdsekId = canonicalClicked;  // canonical form for API calls
             renderDetailsTable(payload.data);
-            fetchAndShowHeatmapValue(clickedOdsek, currentMonthString(), fallbackGgoName).catch(() => {});
+            fetchAndShowHeatmapValue(canonicalClicked, currentMonthString(), fallbackGgoName).catch(() => {});
             setHighlight(clickedOdsek, fallbackGgoName);
             _updateZoomVisibility(GGE_TO_ODSEK_ZOOM);
             {

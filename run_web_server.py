@@ -2,9 +2,10 @@
 """
 Simple MBTiles viewer using MapLibre GL JS.
 Run with: python3 view_mbtiles.py
-Then open http://localhost:8000 in your browser.
+Then open http://localhost:8000 in your browser.x
 """
 
+import re
 import sqlite3
 import os
 import sys
@@ -319,8 +320,8 @@ def build_odsek_bbox_index(mbtiles_file: str, zoom: int = 11) -> dict:
                 raw_bbox = feat['bbox']
                 extent = feat['extent']
                 ggo = str(props.get('ggo_naziv', '')).strip()
-                # Strip all spaces — mbtiles stores e.g. "01 58A", CSV has "01058A"
-                odsek = str(props.get('odsek', '')).replace(' ', '')
+                # Normalize to canonical form — mbtiles stores e.g. "01 58A", canonical is "01058A"
+                odsek = _normalize_odsek_id(str(props.get('odsek', '')))
                 if not ggo or not odsek or raw_bbox is None:
                     continue
                 mn_x, mn_y, mx_x, mx_y = raw_bbox
@@ -457,6 +458,24 @@ def _configure_csv_field_limit():
             limit = limit // 10
 
 
+def _normalize_odsek_id(odsek_id):
+    """Canonical internal form: spaces → zeros.  '01  1A' → '01001A'."""
+    return (odsek_id or '').strip().replace(' ', '0')
+
+
+_ODSEK_DISPLAY_RE = re.compile(r'^(\d{2})(\d{3})([A-Z]*)$')
+
+def _odsek_display(odsek_id):
+    """Display form: leading zeros in the 3-digit sub-part → spaces.  '01001A' → '01  1A'."""
+    m = _ODSEK_DISPLAY_RE.match(odsek_id or '')
+    if m:
+        prefix, digits, suffix = m.groups()
+        stripped = digits.lstrip('0') or '0'
+        padded   = stripped.rjust(3)          # pad with spaces to width 3
+        return f'{prefix}{padded}{suffix}'
+    return odsek_id
+
+
 def _odsek_sort_key(odsek_id):
     try:
         return (0, int(odsek_id))
@@ -500,7 +519,7 @@ def load_odseki_data():
 
             for row in reader:
                 ggo_name = (row.get(GGO_FIELD) or '').strip()
-                odsek_id = (row.get(ODSEK_FIELD) or '').strip()
+                odsek_id = _normalize_odsek_id(row.get(ODSEK_FIELD) or '')
                 if not ggo_name or not odsek_id:
                     continue
 
@@ -591,7 +610,7 @@ def _read_heatmap_file(path):
         reader = csv.DictReader(f)
         for row in reader:
             month = row.get('leto_mesec', '').strip()
-            odsek = row.get('odsek_id',   '').strip()
+            odsek = _normalize_odsek_id(row.get('odsek_id', ''))
             if not month or not odsek:
                 continue
             try:
@@ -907,14 +926,15 @@ class TileHandler(BaseHTTPRequestHandler):
 
         if path == '/api/odseki/suggest':
             query_map = parse_qs(parsed.query)
-            query = query_map.get('q', [''])[0].strip().lower()
+            # Normalize query so "01 5" and "01050" both match "01050…"
+            query = _normalize_odsek_id(query_map.get('q', [''])[0]).lower()
             ggo_name = query_map.get('ggo', [''])[0].strip()
 
             if not ggo_name or not query:
                 suggestions = []
             else:
                 suggestions = [
-                    odsek_id
+                    _odsek_display(odsek_id)   # return display form (spaces)
                     for odsek_id in ODSEKI_BY_GGO.get(ggo_name, [])
                     if odsek_id.lower().startswith(query)
                 ][:SUGGESTION_LIMIT]
@@ -929,7 +949,7 @@ class TileHandler(BaseHTTPRequestHandler):
         if path == '/api/odseki/by-key':
             query_map = parse_qs(parsed.query)
             ggo_name = query_map.get('ggo', [''])[0].strip()
-            odsek_id = query_map.get('odsek', [''])[0].strip()
+            odsek_id = _normalize_odsek_id(query_map.get('odsek', [''])[0])
 
             if not ggo_name or not odsek_id:
                 self._send_json(400, {'error': 'Missing ggo or odsek query parameter'})
@@ -955,7 +975,7 @@ class TileHandler(BaseHTTPRequestHandler):
 
         if path == '/api/heatmap/value':
             query_map = parse_qs(parsed.query)
-            odsek_id = query_map.get('odsek', [''])[0].strip()
+            odsek_id = _normalize_odsek_id(query_map.get('odsek', [''])[0])
             month    = query_map.get('month', [''])[0].strip()
             ggo_name = query_map.get('ggo',   [''])[0].strip()
             if not odsek_id or not month:
@@ -1011,7 +1031,7 @@ class TileHandler(BaseHTTPRequestHandler):
             return
 
         if path.startswith('/api/odseki/'):
-            odsek_id = unquote(path[len('/api/odseki/'):]).strip()
+            odsek_id = _normalize_odsek_id(unquote(path[len('/api/odseki/'):]))
             if not odsek_id:
                 self._send_json(400, {'error': 'Missing odsek id'})
                 return
@@ -1079,7 +1099,7 @@ class TileHandler(BaseHTTPRequestHandler):
 
 
 # Increment this when the cache format, layer name, or odsek normalisation logic changes.
-_BBOX_CACHE_VERSION = 3
+_BBOX_CACHE_VERSION = 4
 
 
 def _load_or_build_bbox_index(mbtiles_file: str, zoom: int = 11) -> dict:
