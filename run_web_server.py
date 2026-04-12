@@ -1137,8 +1137,8 @@ class TileHandler(BaseHTTPRequestHandler):
             self._serve_mbtiles_tile(ODSEKI_MBTILES_FILE, path)
             return
 
-        if path == '/video_background3.mp4':
-            self._serve_video_file(BASE_DIR / 'data' / 'video_background3.mp4')
+        if path == '/video_background.mp4':
+            self._serve_video_file(BASE_DIR / 'data' / 'video_background.mp4')
             return
 
         self._serve_static_file(path)
