@@ -119,6 +119,7 @@ _GGE_CACHE_VERSION = 5
 
 # GGE lookup tables (populated by load_odseki_data and load_gge_area_data)
 ODSEK_TO_GGE = {}            # {odsek_id: gge_naziv}
+GGO_BY_GGE   = {}            # {gge_naziv: ggo_naziv} — built from odseki data
 GGE_AREA = {}                # {gge_naziv: area_ha} — loaded from gge.csv
 
 
@@ -473,7 +474,7 @@ def _extract_ggo_code_from_odsek(odsek_id):
 
 def load_odseki_data():
     global ODSEKI_BY_KEY, ODSEKI_BY_ODSEK, GGO_NAMES, GGO_OPTIONS, POVRSINA_BY_ODSEK, \
-           ODSEK_TO_GGE
+           ODSEK_TO_GGE, GGO_BY_GGE
 
     ODSEKI_BY_KEY = {}
     ODSEKI_BY_ODSEK = defaultdict(list)
@@ -481,6 +482,7 @@ def load_odseki_data():
     GGO_OPTIONS = []
     POVRSINA_BY_ODSEK = {}
     ODSEK_TO_GGE = {}
+    GGO_BY_GGE = {}
 
     _configure_csv_field_limit()
 
@@ -525,6 +527,8 @@ def load_odseki_data():
                 gge = (record.get('gge_naziv') or '').strip()
                 if gge and odsek_id not in ODSEK_TO_GGE:
                     ODSEK_TO_GGE[odsek_id] = gge
+                if gge and gge not in GGO_BY_GGE:
+                    GGO_BY_GGE[gge] = ggo_name
 
         # Average area across GGOs so coloring is consistent regardless of iteration order
         POVRSINA_BY_ODSEK = {oid: sum(vals) / len(vals) for oid, vals in _povrsina_accum.items()}
@@ -886,6 +890,19 @@ class TileHandler(BaseHTTPRequestHandler):
                 'ggo_names': GGO_NAMES,
                 'options': GGO_OPTIONS
             })
+            return
+
+        if path == '/api/gge/ggo':
+            query_map = parse_qs(parsed.query)
+            gge_name = query_map.get('gge', [''])[0].strip()
+            if not gge_name:
+                self._send_json(400, {'error': 'Missing gge query parameter'})
+                return
+            ggo_name = GGO_BY_GGE.get(gge_name)
+            if not ggo_name:
+                self._send_json(404, {'error': f'GGO for GGE {gge_name!r} not found'})
+                return
+            self._send_json(200, {'gge_naziv': gge_name, 'ggo_naziv': ggo_name})
             return
 
         if path == '/api/odseki/suggest':

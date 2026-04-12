@@ -1138,6 +1138,26 @@ map.on('click', 'gge-fill', (event) => {
     if (!ggeName) return;
     clearHighlight();
     setGgeHighlight(ggeName);
+
+    // Clear the odsek search box.
+    searchInput.value = '';
+    suggestionsEl.innerHTML = '';
+
+    // Lookup the GGO for this GGE and sync the dropdown.
+    fetch(`/api/gge/ggo?gge=${encodeURIComponent(ggeName)}`)
+        .then(r => r.ok ? r.json() : null)
+        .then(data => {
+            const ggoName = data?.ggo_naziv;
+            if (ggoName && ggoCodeByName.has(ggoName)) {
+                ggoSelect.value = ggoName;
+                setSearchEnabled(true);
+                selectedOdsekEl.textContent = `Izbran GGO: ${ggoName}`;
+                detailsEl.classList.add('empty');
+                detailsEl.textContent = 'Vnesi odsek in izberi predlog.';
+            }
+        })
+        .catch(() => {});
+
     applyMonthColor().catch(console.error);
 
     // Query ALL tile pieces of this GGE across the full source to get the true combined bbox.
