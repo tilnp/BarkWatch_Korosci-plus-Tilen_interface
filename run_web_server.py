@@ -1107,6 +1107,44 @@ class TileHandler(BaseHTTPRequestHandler):
             })
             return
 
+        if path == '/api/heatmap/odsek-series':
+            query_map  = parse_qs(parsed.query)
+            odsek_id   = _normalize_odsek_id(query_map.get('odsek', [''])[0])
+            ggo_name   = query_map.get('ggo',     [''])[0].strip()
+            dataset    = query_map.get('dataset', ['real'])[0].strip()
+            if not odsek_id:
+                self._send_json(400, {'error': 'Missing odsek'})
+                return
+            abs_src        = HEATMAP_ABS_BY_MONTH_SYN if dataset == 'synthetic' else HEATMAP_ABS_BY_MONTH
+            months_src     = HEATMAP_MONTHS_SYN        if dataset == 'synthetic' else HEATMAP_MONTHS
+            forecast_start = FORECAST_START_MONTH_SYN  if dataset == 'synthetic' else FORECAST_START_MONTH
+            record   = ODSEKI_BY_KEY.get((ggo_name, odsek_id)) if ggo_name else None
+            povrsina = None
+            if record:
+                try:
+                    povrsina = float(record.get('povrsina') or 0) or None
+                except ValueError:
+                    pass
+            if povrsina is None:
+                povrsina = POVRSINA_BY_ODSEK.get(odsek_id)
+            series = []
+            for month in months_src:
+                target_abs = (abs_src.get(month) or {}).get(odsek_id)
+                relative   = round(target_abs / povrsina, 6) if (target_abs is not None and povrsina) else None
+                series.append({
+                    'month':    month,
+                    'target':   target_abs,
+                    'relative': relative,
+                    'has_data': target_abs is not None,
+                })
+            self._send_json(200, {
+                'odsek':          odsek_id,
+                'forecast_start': forecast_start,
+                'povrsina':       povrsina,
+                'series':         series,
+            })
+            return
+
         if path == '/api/heatmap/value':
             query_map = parse_qs(parsed.query)
             odsek_id = _normalize_odsek_id(query_map.get('odsek', [''])[0])

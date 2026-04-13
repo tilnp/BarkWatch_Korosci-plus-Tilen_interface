@@ -670,6 +670,8 @@ async function fetchAndShowHeatmapValue(odsekId, month, ggoName = '') {
     }
 }
 
+const ANALYZE_BTN_HTML = '<button class="posek-analyze-btn" type="button">Analiziraj</button>';
+
 function renderHeatmapValue(data, month) {
     const [year, mon] = month.split('-');
     const label = `${SL_MONTHS[parseInt(mon, 10) - 1] ?? ''} ${year}`;
@@ -677,7 +679,7 @@ function renderHeatmapValue(data, month) {
     if (!data.has_data) {
         heatmapInfoEl.classList.remove('hidden');
         heatmapInfoEl.innerHTML =
-            `<div class="posek-title">Posek — ${label}</div>` +
+            `<div class="posek-header"><div class="posek-title">Posek — ${label}</div>${ANALYZE_BTN_HTML}</div>` +
             `<div class="posek-none">Ni podatkov o poseku.</div>`;
         return;
     }
@@ -691,9 +693,129 @@ function renderHeatmapValue(data, month) {
 
     heatmapInfoEl.classList.remove('hidden');
     heatmapInfoEl.innerHTML =
-        `<div class="posek-title">Posek — ${label}</div>` +
+        `<div class="posek-header"><div class="posek-title">Posek — ${label}</div>${ANALYZE_BTN_HTML}</div>` +
         `<div class="posek-total">${absStr}</div>` +
         `<div class="posek-relative">${relStr}</div>`;
+}
+
+// ── Analysis modal ────────────────────────────────────────────────────────────
+
+const analysisModal    = document.getElementById('analysis-modal');
+const analysisClose    = document.getElementById('analysis-close');
+const analysisSubtitle = document.getElementById('analysis-subtitle');
+
+let _analysisChart = null;
+
+function closeAnalysisModal() {
+    analysisModal.classList.add('hidden');
+    if (_analysisChart) { _analysisChart.destroy(); _analysisChart = null; }
+}
+
+analysisClose.addEventListener('click', closeAnalysisModal);
+analysisModal.addEventListener('click', e => { if (e.target === analysisModal) closeAnalysisModal(); });
+document.addEventListener('keydown', e => {
+    if (e.key === 'Escape' && !analysisModal.classList.contains('hidden')) closeAnalysisModal();
+});
+
+// Click delegation — button lives inside heatmapInfoEl (set via innerHTML).
+heatmapInfoEl.addEventListener('click', e => {
+    if (e.target.closest('.posek-analyze-btn')) openAnalysisModal();
+});
+
+const SL_MONTHS_FULL = ['Januar','Februar','Marec','April','Maj','Junij','Julij','Avgust','September','Oktober','November','December'];
+
+async function openAnalysisModal() {
+    const odsekId = selectedOdsekId;
+    const ggoName = selectedGgoName();
+    if (!odsekId) return;
+
+    analysisModal.classList.remove('hidden');
+    analysisSubtitle.textContent = `Odsek ${odsekId}${ggoName ? ' · GGO ' + ggoName : ''}`;
+    if (_analysisChart) { _analysisChart.destroy(); _analysisChart = null; }
+
+    try {
+        const ggoParam = ggoName ? `&ggo=${encodeURIComponent(ggoName)}` : '';
+        const resp = await fetch(
+            `/api/heatmap/odsek-series?odsek=${encodeURIComponent(odsekId)}${ggoParam}&dataset=${currentDataset}`
+        );
+        if (!resp.ok) throw new Error('fetch failed');
+        const data = await resp.json();
+
+        const { series, forecast_start } = data;
+
+        // X-axis: one label per month (bar chart needs a label for every bar),
+        // but only show the year text for January (or the very first point).
+        const labels = series.map((s, i) => {
+            const [yr, mo] = s.month.split('-');
+            return (mo === '01' || i === 0) ? yr : '';
+        });
+
+        const values = series.map(s => s.target ?? 0);
+        const colors = series.map(s =>
+            forecast_start && s.month >= forecast_start ? '#f97316' : '#166534'
+        );
+
+        const canvas = document.getElementById('analysis-chart');
+        _analysisChart = new Chart(canvas, {
+            type: 'bar',
+            data: {
+                labels,
+                datasets: [{
+                    data: values,
+                    backgroundColor: colors,
+                    borderRadius: 3,
+                    borderSkipped: false,
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: { display: false },
+                    tooltip: {
+                        callbacks: {
+                            title: items => {
+                                const s = series[items[0].dataIndex];
+                                const [yr, mo] = s.month.split('-');
+                                return `${SL_MONTHS_FULL[parseInt(mo, 10) - 1] ?? ''} ${yr}`;
+                            },
+                            label: ctx => {
+                                const s = series[ctx.dataIndex];
+                                const abs = s.has_data
+                                    ? `${s.target.toLocaleString('sl-SI', { maximumFractionDigits: 1 })} m³`
+                                    : 'Ni podatkov';
+                                const rel = s.relative != null
+                                    ? `  (${s.relative.toLocaleString('sl-SI', { maximumFractionDigits: 4 })} m³/ha)`
+                                    : '';
+                                return abs + rel;
+                            }
+                        }
+                    }
+                },
+                scales: {
+                    x: {
+                        grid: { display: false },
+                        ticks: {
+                            maxRotation: 0,
+                            font: { size: 11 },
+                            autoSkip: false,
+                            // Return undefined for empty-string labels so Chart.js
+                            // draws the tick mark but omits the text.
+                            callback: (_val, idx) => labels[idx] || undefined,
+                        }
+                    },
+                    y: {
+                        beginAtZero: true,
+                        title: { display: true, text: 'Posek (m³)', font: { size: 11 } },
+                        grid: { color: 'rgba(0,0,0,0.06)' },
+                        ticks: { font: { size: 11 } }
+                    }
+                }
+            }
+        });
+    } catch (e) {
+        console.error('Analysis fetch failed:', e);
+    }
 }
 
 async function initHeatmap(preserveMonth = '') {

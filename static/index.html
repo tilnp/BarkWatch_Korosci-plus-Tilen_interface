@@ -6,6 +6,7 @@
     <title>BarkWatch Slovenija</title>
     <link rel="icon" type="image/png" href="/logo_transparent.png">
     <script src="https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
     <link href="https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl.css" rel="stylesheet">
     <link href="/styles.css" rel="stylesheet">
 </head>
@@ -87,6 +88,27 @@
                         Meja GGO
                         <input type="checkbox" id="toggle-ggo-outline" class="legend-row-toggle" checked>
                     </div>
+                </div>
+            </div>
+        </div>
+
+        <div id="analysis-modal" class="analysis-modal hidden" role="dialog" aria-modal="true" aria-labelledby="analysis-modal-title">
+            <div class="analysis-modal-box">
+                <div class="analysis-modal-header">
+                    <div>
+                        <h2 class="analysis-modal-title" id="analysis-modal-title">Posek skozi čas</h2>
+                        <p id="analysis-subtitle" class="analysis-subtitle"></p>
+                    </div>
+                    <button id="analysis-close" class="analysis-close" aria-label="Zapri">&times;</button>
+                </div>
+                <div class="analysis-legend">
+                    <span class="analysis-legend-dot" style="background:#166534"></span>
+                    <span>Izmerjeni podatki</span>
+                    <span class="analysis-legend-dot forecast-dot"></span>
+                    <span>Napovedi</span>
+                </div>
+                <div class="analysis-chart-wrap">
+                    <canvas id="analysis-chart"></canvas>
                 </div>
             </div>
         </div>
