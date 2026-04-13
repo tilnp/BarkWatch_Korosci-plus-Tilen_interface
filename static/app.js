@@ -15,12 +15,12 @@ let ANIM = ANIM_NORMAL;
 // Mapping: CSV column name → display label shown in the details panel.
 // To rename a field, change the value on the right. To reorder, move the entry.
 const FIELD_LABELS = {
-    ggo_naziv:      'Gozdnogospodarsko območje',
-    odsek:          'Odsek ID',
     povrsina:       'Površina (ha)',
     gge_naziv:      'Gozdnogospodarska enota',
     ke_naziv:       'Krajevna enota',
     revir_naziv:    'Revir',
+    revirni:        'Revirni gozdar',
+    eposta:         'Kontakt',
     katgozd_naziv:  'Kategorija gozda',
     ohranjen_naziv: 'Ohranjenost',
     relief_naziv:   'Relief',

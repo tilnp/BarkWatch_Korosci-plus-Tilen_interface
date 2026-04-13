@@ -87,7 +87,7 @@ GGE_HEATMAP_BREAKS = [0.02, 0.03, 0.12]
 ODSEKI_FIELDS = [
     'ggo_naziv', 'odsek', 'povrsina', 'gge_naziv', 'ke_naziv', 'revir_naziv',
     'katgozd_naziv', 'ohranjen_naziv', 'relief_naziv', 'lega_naziv',
-    'pozar_naziv', 'intgosp_naziv', 'krajime', 'grt1_naziv'
+    'pozar_naziv', 'intgosp_naziv', 'krajime', 'grt1_naziv', 'revirni', 'eposta'
 ]
 
 SUGGESTION_LIMIT = 20
