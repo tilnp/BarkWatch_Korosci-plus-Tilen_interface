@@ -863,7 +863,9 @@ def _load_or_build_gge_cache(src_paths, cache_path, abs_by_month, label=''):
     if cache_path.exists():
         try:
             cache_mtime = os.path.getmtime(cache_path)
-            if cache_mtime >= src_mtime:
+            if cache_mtime < src_mtime:
+                print(f"GGE cache ({label}) is stale (source files newer) — rebuilding...")
+            else:
                 with cache_path.open('r', encoding='utf-8') as f:
                     raw = json.load(f)
                 if raw.get('_version') == _GGE_CACHE_VERSION:
@@ -886,7 +888,7 @@ def _load_or_build_gge_cache(src_paths, cache_path, abs_by_month, label=''):
 
     try:
         # Serialise: (ggo, gge) tuple keys → encoded strings for JSON
-        out = {
+        out: dict = {
             month: {_gge_key_encode(ggo, gge): bucket for (ggo, gge), bucket in buckets.items()}
             for month, buckets in result.items()
         }

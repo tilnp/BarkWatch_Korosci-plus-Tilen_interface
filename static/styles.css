@@ -306,7 +306,8 @@ h1 .watch { color: #166534; }
 }
 
 .dataset-btn {
-    flex: 1;
+    flex: 0 0 auto;
+    min-width: 105px;
     padding: 3px 10px;
     font-size: 0.72rem;
     font-weight: 600;
