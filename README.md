@@ -13,7 +13,7 @@ Slovenia is one of the most forested countries in Europe — around 58% of its l
 BarkWatch ingests historical forest harvest data (*posek*), feeds it into an offline-trained AI model, and visualises both past activity and future predictions on an interactive map. Foresters, planners, and researchers can:
 
 - Track bark beetle activity at the individual forest sector (*odsek*) level
-- Explore a 36-month time window (past + forecast) via a time slider
+- Explore a ~20 year time window in the past and 1 year prediction via a time slider
 - Drill into any sector and view its full time-series chart
 - Switch between real measured data and a synthetic beetle infestation dataset
 
