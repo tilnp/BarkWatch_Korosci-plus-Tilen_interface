@@ -10,12 +10,6 @@ import os
 import sys
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
-ODSEKI_MBTILES_FILE = 'data/vector_map_odseki.mbtiles'
-GGO_MBTILES_FILE    = 'data/vector_map_ggo.mbtiles'
-GGE_MBTILES_FILE    = 'data/vector_map_gge.mbtiles'
-SLO_MBTILES_FILE    = 'data/vector_map_slovenia.mbtiles'
-PORT = 8000
-
 import csv
 import json
 import mimetypes
@@ -26,20 +20,27 @@ from urllib.parse import urlparse, parse_qs, unquote
 
 BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / 'static'
+DATA_DIR = BASE_DIR / 'data'
 
-# Easy-to-change location and file name for odsek attribute data.
-ODSEKI_DATA_DIR = BASE_DIR / "data"
+# Absolute MBTiles paths (resolved from this file), so running from any CWD works.
+ODSEKI_MBTILES_FILE = DATA_DIR / 'vector_map_odseki.mbtiles'
+GGO_MBTILES_FILE    = DATA_DIR / 'vector_map_ggo.mbtiles'
+GGE_MBTILES_FILE    = DATA_DIR / 'vector_map_gge.mbtiles'
+SLO_MBTILES_FILE    = DATA_DIR / 'vector_map_slovenia.mbtiles'
+PORT = 8000
+
+ODSEKI_DATA_DIR = DATA_DIR
 ODSEKI_DATA_FILENAME = 'odseki.csv'
 ODSEKI_DATA_PATH = ODSEKI_DATA_DIR / ODSEKI_DATA_FILENAME
 
 # GGE area data — used to normalize heatmap values per GGE (m³/ha).
 GGE_DATA_PATH = BASE_DIR / 'data' / 'gge.csv'
 
-# Heatmap source files — change these to point to different CSVs if needed.
+# Heatmap source files
 HEATMAP_PAST_DATA_PATH   = BASE_DIR / 'data' / 'heatmap_past_data.csv'
 HEATMAP_FUTURE_DATA_PATH = BASE_DIR / 'data' / 'heatmap_future_predictions.csv'
 
-# Synthetic heatmap source files (added later to data/).
+# Synthetic heatmap source files
 HEATMAP_PAST_DATA_PATH_SYN   = BASE_DIR / 'data' / 'heatmap_past_data_synthetic.csv'
 HEATMAP_FUTURE_DATA_PATH_SYN = BASE_DIR / 'data' / 'heatmap_future_predictions_synthetic.csv'
 
@@ -47,7 +48,7 @@ HEATMAP_FUTURE_DATA_PATH_SYN = BASE_DIR / 'data' / 'heatmap_future_predictions_s
 # 'predictions' → future file takes priority; 'data' → past file takes priority.
 OVERLAP_PREFER = 'predictions'
 
-# ── Preslikava ggo (številka v heatmap.csv) → ggo_naziv (niz v vector tilesih)
+# ── Preslikava ggo → ggo_naziv
 GGO_CODE_TO_NAZIV = {
     1:  'TOLMIN',
     2:  'BLED',
@@ -315,7 +316,7 @@ def _px_to_geo(z, x_tile, y_tms, px, py, extent):
     return lon, lat
 
 
-def build_odsek_bbox_index(mbtiles_file: str, zoom: int = 11) -> dict:
+def build_odsek_bbox_index(mbtiles_file: str | Path, zoom: int = 11) -> dict:
     """Decode all tiles at *zoom* and return {(ggo_naziv, odsek): [W,S,E,N]}."""
     index = {}
     try:
@@ -369,7 +370,7 @@ def build_odsek_bbox_index(mbtiles_file: str, zoom: int = 11) -> dict:
     return index
 
 
-def build_gge_area_index(mbtiles_file: str, zoom: int = 11) -> dict:
+def build_gge_area_index(mbtiles_file: str | Path, zoom: int = 11) -> dict:
     """Decode GGE polygon geometries and return {gge_naziv: area_ha}.
 
     Uses the Shoelace formula on lat/lon coordinates with a flat-earth approximation
@@ -1341,7 +1342,11 @@ class TileHandler(BaseHTTPRequestHandler):
             return
 
         if path == '/video_background.mp4':
-            self._serve_video_file(BASE_DIR / 'data' / 'video_background.mp4')
+            video_path = BASE_DIR / 'static' / 'video_background.mp4'
+            if not video_path.exists():
+                # Backward compatibility with the old location
+                video_path = BASE_DIR / 'data' / 'video_background.mp4'
+            self._serve_video_file(video_path)
             return
 
         self._serve_static_file(path)
@@ -1351,7 +1356,7 @@ class TileHandler(BaseHTTPRequestHandler):
 _BBOX_CACHE_VERSION = 5
 
 
-def _load_or_build_bbox_index(mbtiles_file: str, zoom: int = 11) -> dict:
+def _load_or_build_bbox_index(mbtiles_file: str | Path, zoom: int = 11) -> dict:
     """Load bbox index from cache file if up-to-date, otherwise rebuild and save."""
     cache_path = Path(mbtiles_file).with_suffix('.bbox_cache.json')
     mbtiles_mtime = os.path.getmtime(mbtiles_file)
