@@ -1,5 +1,9 @@
 const SLOVENIA_CENTER = [14.9955, 46.1512];
-const INITIAL_ZOOM = 8;
+const INITIAL_ZOOM = 8; // fallback before load; actual home zoom/center set by fitBounds on load
+const SLOVENIA_BOUNDS = [[13.38, 45.42], [16.61, 46.88]]; // tight land border of Slovenia
+
+let _homeZoom   = INITIAL_ZOOM;
+let _homeCenter = SLOVENIA_CENTER;
 
 // Zoom level at which GGE coloring fades out and individual odsek coloring takes over.
 // Increase to keep GGE visible longer when zooming in; decrease to switch earlier.
@@ -250,7 +254,6 @@ const map = new maplibregl.Map({
     },
     center: SLOVENIA_CENTER,
     zoom: INITIAL_ZOOM,
-    minZoom: INITIAL_ZOOM,
     maxZoom: 16,
     maxPitch: 70
 });
@@ -339,8 +342,8 @@ function _snapNow() {
 
 function _pushInitialSnap() {
     const snap = {
-        center:  SLOVENIA_CENTER,
-        zoom:    INITIAL_ZOOM,
+        center:  _homeCenter,
+        zoom:    _homeZoom,
         bearing: 0,
         pitch:   0,
         odsekId: '',
@@ -391,11 +394,11 @@ function _pushSnap() {
 map.on('moveend', () => {
     const c = map.getCenter();
     _isDefaultView =
-        Math.abs(map.getZoom()    - INITIAL_ZOOM)    < 0.01 &&
+        Math.abs(map.getZoom()    - _homeZoom)       < 0.01 &&
         Math.abs(map.getBearing())                   < 0.1  &&
         Math.abs(map.getPitch())                     < 0.1  &&
-        Math.abs(c.lng - SLOVENIA_CENTER[0])         < 0.0001 &&
-        Math.abs(c.lat - SLOVENIA_CENTER[1])         < 0.0001;
+        Math.abs(c.lng - _homeCenter[0])             < 0.0001 &&
+        Math.abs(c.lat - _homeCenter[1])             < 0.0001;
     if (_navHistory) return;
     if (_dragSnapSuppress) { _pendingDragSnap = true; return; }
     _pushSnap();
@@ -462,11 +465,11 @@ map.addControl({
             resetPanel();
             // Switch to 2D layers immediately so extrusions don't render during the zoom-out.
             _map3dMode = false;
-            _updateZoomVisibility(INITIAL_ZOOM);
+            _updateZoomVisibility(_homeZoom);
             applyMonthColor().catch(console.error);
             if (!_isDefaultView) {
                 map.once('moveend', () => { _isDefaultView = true; });
-                map.flyTo({ center: SLOVENIA_CENTER, zoom: INITIAL_ZOOM, bearing: 0, pitch: 0, duration: ANIM.reset });
+                map.flyTo({ center: _homeCenter, zoom: _homeZoom, bearing: 0, pitch: 0, duration: ANIM.reset });
             }
         });
         this._container.appendChild(btn);
@@ -1906,6 +1909,10 @@ const SLOVENIA_MAX_BOUNDS = [[12.0, 44.8], [17.8, 47.5]];
 
 map.on('load', () => {
     map.setMaxBounds(SLOVENIA_MAX_BOUNDS);
+    map.fitBounds(SLOVENIA_BOUNDS, { padding: 70, animate: false });
+    _homeZoom   = map.getZoom();
+    _homeCenter = map.getCenter().toArray();
+    map.setMinZoom(_homeZoom);
     _pushInitialSnap();
     initHeatmap().catch(console.error);
 });
