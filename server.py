@@ -8,7 +8,7 @@ Then open http://localhost:8000 in your browser.
 import sqlite3
 import os
 import sys
-from http.server import HTTPServer, BaseHTTPRequestHandler
+from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 
 import csv
 import json
@@ -1060,18 +1060,17 @@ class TileHandler(BaseHTTPRequestHandler):
             _, z, x, y = parts
             z, x, y = int(z), int(x), int(y.split('.')[0])
             y_tms = (2 ** z - 1) - y
-            conn = sqlite3.connect(mbtiles_file)
-            try:
-                cursor = conn.cursor()
-                cursor.execute(
+            ram = _MBTILES_RAM.get(str(mbtiles_file))
+            if ram is not None:
+                tile_data = ram.get((z, x, y_tms))
+            else:
+                conn = _get_mbtiles_conn(mbtiles_file)
+                row = conn.execute(
                     'SELECT tile_data FROM tiles WHERE zoom_level=? AND tile_column=? AND tile_row=?',
                     (z, x, y_tms)
-                )
-                row = cursor.fetchone()
-            finally:
-                conn.close()
-            if row:
-                tile_data = row[0]
+                ).fetchone()
+                tile_data = row[0] if row else None
+            if tile_data is not None:
                 self.send_response(200)
                 self.send_header('Content-Type', 'application/vnd.mapbox-vector-tile')
                 if tile_data[:2] == b'\x1f\x8b':
@@ -1506,6 +1505,26 @@ def _load_or_build_bbox_index(mbtiles_file: str | Path, zoom: int = 11) -> dict:
     return index
 
 
+_MBTILES_CONNS: dict = {}
+_MBTILES_RAM: dict = {}  # file path -> {(z, x, y_tms): tile_data}
+
+def _get_mbtiles_conn(mbtiles_file):
+    key = str(mbtiles_file)
+    if key not in _MBTILES_CONNS:
+        conn = sqlite3.connect(key, check_same_thread=False)
+        conn.execute('PRAGMA query_only = ON')
+        _MBTILES_CONNS[key] = conn
+    return _MBTILES_CONNS[key]
+
+def _load_mbtiles_into_ram(mbtiles_file):
+    key = str(mbtiles_file)
+    conn = sqlite3.connect(key)
+    rows = conn.execute('SELECT zoom_level, tile_column, tile_row, tile_data FROM tiles').fetchall()
+    conn.close()
+    _MBTILES_RAM[key] = {(z, x, y): bytes(data) for z, x, y, data in rows}
+    print(f"Loaded {len(_MBTILES_RAM[key]):,} tiles from {Path(mbtiles_file).name}")
+
+
 def main():
     if not os.path.exists(ODSEKI_MBTILES_FILE):
         print(f"ERROR: '{ODSEKI_MBTILES_FILE}' not found.")
@@ -1516,6 +1535,13 @@ def main():
         print(f"ERROR: static directory not found: {STATIC_DIR}")
         print("Create static/index.html, static/styles.css and static/app.js")
         sys.exit(1)
+
+    for f in (GGE_MBTILES_FILE, GGO_MBTILES_FILE, SLO_MBTILES_FILE):
+        if os.path.exists(f):
+            _load_mbtiles_into_ram(f)
+
+    if os.path.exists(ODSEKI_MBTILES_FILE):
+        _get_mbtiles_conn(ODSEKI_MBTILES_FILE)
 
     load_odseki_data()
     load_gge_area_data()
@@ -1535,16 +1561,12 @@ def main():
     ODSEKI_BY_GGO = {ggo: sorted(ids, key=_odsek_sort_key) for ggo, ids in by_ggo.items()}
     print(f"Suggestion index: {sum(len(v) for v in ODSEKI_BY_GGO.values()):,} segments across {len(ODSEKI_BY_GGO)} GGO")
 
-    print(f"Serving {ODSEKI_MBTILES_FILE}")
     print(f"Serving static files from {STATIC_DIR}")
-    print(f"Odseki data file: {ODSEKI_DATA_PATH}")
-    print(f"Heatmap past data:   {HEATMAP_PAST_DATA_PATH}")
-    print(f"Heatmap future data: {HEATMAP_FUTURE_DATA_PATH}")
     print(f"Overlap preference: {OVERLAP_PREFER}")
     print(f"Open http://localhost:{PORT} in your browser")
     print("Press Ctrl+C to stop")
 
-    server = HTTPServer(('localhost', PORT), TileHandler)
+    server = ThreadingHTTPServer(('localhost', PORT), TileHandler)
     server.serve_forever()
 
 if __name__ == '__main__':

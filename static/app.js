@@ -322,6 +322,7 @@ let _histIdx    = -1;
 let _navHistory       = false; // true while animating through history — suppresses recording
 let _dragSnapSuppress = false; // true while any mouse button is held
 let _pendingDragSnap  = false; // moveend fired during drag — push snap on mouseup
+let _isDefaultView    = true;  // set after every moveend; true only when settled at home
 
 function _snapNow() {
     return {
@@ -388,6 +389,13 @@ function _pushSnap() {
 }
 
 map.on('moveend', () => {
+    const c = map.getCenter();
+    _isDefaultView =
+        Math.abs(map.getZoom()    - INITIAL_ZOOM)    < 0.01 &&
+        Math.abs(map.getBearing())                   < 0.1  &&
+        Math.abs(map.getPitch())                     < 0.1  &&
+        Math.abs(c.lng - SLOVENIA_CENTER[0])         < 0.0001 &&
+        Math.abs(c.lat - SLOVENIA_CENTER[1])         < 0.0001;
     if (_navHistory) return;
     if (_dragSnapSuppress) { _pendingDragSnap = true; return; }
     _pushSnap();
@@ -456,7 +464,10 @@ map.addControl({
             _map3dMode = false;
             _updateZoomVisibility(INITIAL_ZOOM);
             applyMonthColor().catch(console.error);
-            map.flyTo({ center: SLOVENIA_CENTER, zoom: INITIAL_ZOOM, bearing: 0, pitch: 0, duration: ANIM.reset });
+            if (!_isDefaultView) {
+                map.once('moveend', () => { _isDefaultView = true; });
+                map.flyTo({ center: SLOVENIA_CENTER, zoom: INITIAL_ZOOM, bearing: 0, pitch: 0, duration: ANIM.reset });
+            }
         });
         this._container.appendChild(btn);
         return this._container;
@@ -919,82 +930,78 @@ function _applyHeightsForMonth(m) {
 async function applyMonthColor() {
     const m = currentMonthString();
     if (!m) return;
-    let buckets = heatmapCache.get(m);
-    if (!buckets) {
-        try {
-            const resp = await fetch(`/api/heatmap?month=${encodeURIComponent(m)}&dataset=${currentDataset}`);
-            if (!resp.ok) return;
-            buckets = await resp.json();
-            if (heatmapCache.size >= HEATMAP_CACHE_LIMIT) {
-                heatmapCache.delete(heatmapCache.keys().next().value);
-            }
-            heatmapCache.set(m, buckets);
-        } catch (e) {
-            console.error('Heatmap fetch failed:', m, e);
-            return;
+
+    // All four fetches run in parallel; odseki and GGE colors are applied as soon
+    // as their own data arrives, without waiting for each other.
+    const odsekiP = (async () => {
+        let buckets = heatmapCache.get(m);
+        if (!buckets) {
+            try {
+                const resp = await fetch(`/api/heatmap?month=${encodeURIComponent(m)}&dataset=${currentDataset}`);
+                if (!resp.ok) return;
+                buckets = await resp.json();
+                if (heatmapCache.size >= HEATMAP_CACHE_LIMIT) heatmapCache.delete(heatmapCache.keys().next().value);
+                heatmapCache.set(m, buckets);
+            } catch (e) { console.error('Heatmap fetch failed:', m, e); return; }
         }
-    }
-    const odsekColorExpr = buildHeatmapExpression(buckets);
-    if (map.getLayer('odseki-fill'))      map.setPaintProperty('odseki-fill',      'fill-extrusion-color', odsekColorExpr);
-    if (map.getLayer('odseki-fill-flat')) map.setPaintProperty('odseki-fill-flat', 'fill-color',           odsekColorExpr);
-    if (selectedOdsekId) {
-        fetchAndShowHeatmapValue(selectedOdsekId, m, selectedGgoName()).catch(() => {});
-    }
+        const odsekColorExpr = buildHeatmapExpression(buckets);
+        if (map.getLayer('odseki-fill'))      map.setPaintProperty('odseki-fill',      'fill-extrusion-color', odsekColorExpr);
+        if (map.getLayer('odseki-fill-flat')) map.setPaintProperty('odseki-fill-flat', 'fill-color',           odsekColorExpr);
+        if (selectedOdsekId) fetchAndShowHeatmapValue(selectedOdsekId, m, selectedGgoName()).catch(() => {});
+    })();
 
     // GGE coloring — fetch and apply regardless of current zoom so it's ready when switching
-    let ggeBuckets = ggeCache.get(m);
-    if (!ggeBuckets) {
-        try {
-            const ggeResp = await fetch(`/api/heatmap/gge?month=${encodeURIComponent(m)}&dataset=${currentDataset}`);
-            if (ggeResp.ok) {
-                ggeBuckets = await ggeResp.json();
-                if (ggeCache.size >= HEATMAP_CACHE_LIMIT) {
-                    ggeCache.delete(ggeCache.keys().next().value);
+    const ggeP = (async () => {
+        let ggeBuckets = ggeCache.get(m);
+        if (!ggeBuckets) {
+            try {
+                const ggeResp = await fetch(`/api/heatmap/gge?month=${encodeURIComponent(m)}&dataset=${currentDataset}`);
+                if (ggeResp.ok) {
+                    ggeBuckets = await ggeResp.json();
+                    if (ggeCache.size >= HEATMAP_CACHE_LIMIT) ggeCache.delete(ggeCache.keys().next().value);
+                    ggeCache.set(m, ggeBuckets);
                 }
-                ggeCache.set(m, ggeBuckets);
+            } catch (e) { console.error('GGE heatmap fetch failed:', m, e); }
+        }
+        if (ggeBuckets) {
+            // Tiles now carry ggo_naziv — use compound key ggo\x00gge so same-name GGEs in
+            // different GGOs receive their own correct bucket colour.
+            const ggeKeyExpr = ['concat', ['get', 'ggo_naziv'], '\x00', ['get', 'gge_naziv']];
+            const args = ['match', ggeKeyExpr];
+            for (const [id, bucket] of Object.entries(ggeBuckets)) {
+                args.push(id, HEATMAP_COLORS[bucket] ?? HEATMAP_COLORS[0]);
             }
-        } catch (e) {
-            console.error('GGE heatmap fetch failed:', m, e);
+            args.push(HEATMAP_COLORS[0]);
+            if (map.getLayer('gge-fill'))      map.setPaintProperty('gge-fill',      'fill-extrusion-color', args);
+            if (map.getLayer('gge-fill-flat')) map.setPaintProperty('gge-fill-flat', 'fill-color',           args);
         }
-    }
-    if (ggeBuckets && map.getLayer('gge-fill')) {
-        // Tiles now carry ggo_naziv — use compound key ggo\x00gge so same-name GGEs in
-        // different GGOs receive their own correct bucket colour.
-        const ggeKeyExpr = ['concat', ['get', 'ggo_naziv'], '\x00', ['get', 'gge_naziv']];
-        const args = ['match', ggeKeyExpr];
-        for (const [id, bucket] of Object.entries(ggeBuckets)) {
-            args.push(id, HEATMAP_COLORS[bucket] ?? HEATMAP_COLORS[0]);
-        }
-        args.push(HEATMAP_COLORS[0]);
-        if (map.getLayer('gge-fill'))      map.setPaintProperty('gge-fill',      'fill-extrusion-color', args);
-        if (map.getLayer('gge-fill-flat')) map.setPaintProperty('gge-fill-flat', 'fill-color',           args);
-    }
+    })();
 
-    // Fetch and cache height data, then apply if in 3D mode
-    let heights = heightCache.get(m);
-    if (!heights) {
+    const heightsP = (async () => {
+        if (heightCache.has(m)) return;
         try {
             const hResp = await fetch(`/api/heatmap/heights?month=${encodeURIComponent(m)}&dataset=${currentDataset}`);
             if (hResp.ok) {
-                heights = await hResp.json();
+                const heights = await hResp.json();
                 if (heightCache.size >= HEATMAP_CACHE_LIMIT) heightCache.delete(heightCache.keys().next().value);
                 heightCache.set(m, heights);
             }
         } catch (e) { console.error('Height fetch failed:', m, e); }
-    }
+    })();
 
-    let ggeHeights = ggeHeightCache.get(m);
-    if (!ggeHeights) {
+    const ggeHeightsP = (async () => {
+        if (ggeHeightCache.has(m)) return;
         try {
             const ghResp = await fetch(`/api/heatmap/gge-heights?month=${encodeURIComponent(m)}&dataset=${currentDataset}`);
             if (ghResp.ok) {
-                ggeHeights = await ghResp.json();
+                const ggeHeights = await ghResp.json();
                 if (ggeHeightCache.size >= HEATMAP_CACHE_LIMIT) ggeHeightCache.delete(ggeHeightCache.keys().next().value);
                 ggeHeightCache.set(m, ggeHeights);
             }
         } catch (e) { console.error('GGE height fetch failed:', m, e); }
-    }
+    })();
 
+    await Promise.all([odsekiP, ggeP, heightsP, ggeHeightsP]);
     _applyHeightsForMonth(m);
 }
 
@@ -1599,8 +1606,13 @@ function setHighlight(odsekId, ggoName) {
 
     // Step 1 — immediate filter always includes GGO when known, so odseki with
     // the same code in other GGOs are never highlighted even before tiles load.
+    // Match both 'ggo_naziv' and 'ggo_name' so the filter works regardless of
+    // which property name the tile uses — avoids waiting for tryRefine/idle.
     const immediateFilter = ggoName
-        ? ['all', odsekFilter, ['==', ['to-string', ['get', 'ggo_naziv']], String(ggoName)]]
+        ? ['all', odsekFilter, ['any',
+            ['==', ['to-string', ['get', 'ggo_naziv']], String(ggoName)],
+            ['==', ['to-string', ['get', 'ggo_name']],  String(ggoName)]
+          ]]
         : odsekFilter;
     _applyFilter(immediateFilter);
 
@@ -1676,23 +1688,29 @@ async function selectOdsek(odsekId, source = 'panel', ggoNameOverride = null, ca
     searchInput.value = displayId;
     suggestionsEl.innerHTML = '';
 
+    // Apply highlight and pre-switch to odsek zoom before awaiting data so the
+    // filter is active and tiles start loading from the very start of the animation.
+    selectedOdsekId = cleanId;
+    _updateDeselectBtn();
+    setHighlight(displayId, ggoName);
+    _updateZoomVisibility(GGE_TO_ODSEK_ZOOM);
+
     const payload = await fetchOdsekByKey(ggoName, cleanId);
     if (!payload || !payload.data) {
         selectedOdsekEl.textContent = `Odsek ${displayId} v GGO '${ggoName}' ni najden.`;
         detailsEl.classList.add('empty');
         detailsEl.textContent = 'Ni podatkov za izbran odsek.';
+        selectedOdsekId = null;
+        _updateDeselectBtn();
+        clearHighlight();
+        _updateZoomVisibility(map.getZoom());
         return;
     }
 
     selectedOdsekEl.textContent = `Izbran odsek: ${displayId} | GGO: ${ggoName}`;
-    selectedOdsekId = cleanId;
-    _updateDeselectBtn();
     renderDetailsTable(payload.data);
     fetchAndShowHeatmapValue(cleanId, currentMonthString(), ggoName).catch(() => {});
 
-    // Apply the highlight filter immediately — MapLibre renders it correctly as tiles load.
-    // Tiles store IDs with spaces, so pass the display form to setHighlight.
-    setHighlight(displayId, ggoName);
     setGgeHighlight(
         String(payload.data.ggo_naziv || ggoName || '').trim(),
         String(payload.data.gge_naziv || '').trim()
@@ -1700,9 +1718,6 @@ async function selectOdsek(odsekId, source = 'panel', ggoNameOverride = null, ca
 
     const duration = source === 'history' ? ANIM.history : source === 'panel' ? ANIM.panel : ANIM.manual;
     cameraOpts = { duration, ...cameraOpts };
-
-    // Pre-apply odsek view immediately so tiles start loading during the flight animation.
-    _updateZoomVisibility(GGE_TO_ODSEK_ZOOM);
 
     // 1. Query all tile pieces of this odsek (filtered by GGO+odsek pair) to get the true combined bbox.
     //    Tiles store odsek IDs with spaces — use displayId for the tile filter.
