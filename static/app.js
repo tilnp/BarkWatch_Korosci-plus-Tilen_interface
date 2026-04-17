@@ -92,11 +92,38 @@ const map = new maplibregl.Map({
                 source: 'satellite'
             },
             {
+                // 2D flat layer — shown when pitch ≤ 1°, hidden otherwise.
+                id: 'gge-fill-flat',
+                type: 'fill',
+                source: 'gge',
+                'source-layer': 'gge_vektor',
+                layout: { visibility: INITIAL_ZOOM < GGE_TO_ODSEK_ZOOM ? 'visible' : 'none' },
+                paint: {
+                    'fill-color': COLOR_ODSEKI_FILL,
+                    'fill-color-transition': { duration: 0, delay: 0 },
+                    'fill-opacity': 0.55
+                }
+            },
+            {
+                // 2D flat layer — shown when pitch ≤ 1°, hidden otherwise.
+                id: 'odseki-fill-flat',
+                type: 'fill',
+                source: 'odseki',
+                'source-layer': 'odseki_map_ggo_gge',
+                layout: { visibility: INITIAL_ZOOM >= GGE_TO_ODSEK_ZOOM ? 'visible' : 'none' },
+                paint: {
+                    'fill-color': COLOR_ODSEKI_FILL,
+                    'fill-color-transition': { duration: 0, delay: 0 },
+                    'fill-opacity': 0.45
+                }
+            },
+            {
+                // 3D extrusion layer — shown only when pitch > 1°.
                 id: 'gge-fill',
                 type: 'fill-extrusion',
                 source: 'gge',
                 'source-layer': 'gge_vektor',
-                layout: { visibility: INITIAL_ZOOM < GGE_TO_ODSEK_ZOOM ? 'visible' : 'none' },
+                layout: { visibility: 'none' },
                 paint: {
                     'fill-extrusion-color': COLOR_ODSEKI_FILL,
                     'fill-extrusion-color-transition': { duration: 0, delay: 0 },
@@ -106,11 +133,12 @@ const map = new maplibregl.Map({
                 }
             },
             {
+                // 3D extrusion layer — shown only when pitch > 1°.
                 id: 'odseki-fill',
                 type: 'fill-extrusion',
                 source: 'odseki',
                 'source-layer': 'odseki_map_ggo_gge',
-                layout: { visibility: INITIAL_ZOOM >= GGE_TO_ODSEK_ZOOM ? 'visible' : 'none' },
+                layout: { visibility: 'none' },
                 paint: {
                     'fill-extrusion-color': COLOR_ODSEKI_FILL,
                     'fill-extrusion-color-transition': { duration: 0, delay: 0 },
@@ -268,6 +296,11 @@ map.addControl({
                 if (!dragged) {
                     const target = map.getPitch() > 1 ? 0 : 60;
                     update(target);
+                    if (target === 0) {
+                        // Switch to 2D layers before the pitch-down animation starts.
+                        _map3dMode = false;
+                        _applyHeightsForMonth(currentMonthString());
+                    }
                     map.easeTo({ pitch: target, duration: ANIM.pitch });
                 }
                 window.removeEventListener('mousemove', onMove);
@@ -419,8 +452,10 @@ map.addControl({
         btn.innerHTML = '⌂';
         btn.addEventListener('click', () => {
             resetPanel();
-            _updateZoomVisibility(INITIAL_ZOOM);   // pre-apply GGE view so tiles load during flight
-            applyMonthColor().catch(console.error); // refresh colors for GGE layer immediately
+            // Switch to 2D layers immediately so extrusions don't render during the zoom-out.
+            _map3dMode = false;
+            _updateZoomVisibility(INITIAL_ZOOM);
+            applyMonthColor().catch(console.error);
             map.flyTo({ center: SLOVENIA_CENTER, zoom: INITIAL_ZOOM, bearing: 0, pitch: 0, duration: ANIM.reset });
         });
         this._container.appendChild(btn);
@@ -719,6 +754,10 @@ datasetBtnSynthetic.addEventListener('click', () => setDataset('synthetic'));
 
 // Trenutno izbran odsek (za posodabljanje poseka ob spremembi meseca)
 let selectedOdsekId = '';
+// Exact tile property values for the 3D extrusion filter — set by setHighlight's refine step.
+// Empty until tiles load; until then the 3D filter uses odsek ID only.
+let _selectedOdsekGgoName = '';
+let _selectedOdsekGgoKey  = 'ggo_naziv';
 
 let suggestionsRequestCounter = 0;
 const ggoCodeByName = new Map();
@@ -858,12 +897,8 @@ function _buildGgeHeightExpression(ggeHeights) {
 }
 
 function _applyHeightsForMonth(m) {
-    if (!m) return;
-    if (!_map3dMode) {
-        if (map.getLayer('odseki-fill')) map.setPaintProperty('odseki-fill', 'fill-extrusion-height', 0);
-        if (map.getLayer('gge-fill'))    map.setPaintProperty('gge-fill',    'fill-extrusion-height', 0);
-        return;
-    }
+    _updateZoomVisibility(map.getZoom());
+    if (!_map3dMode || !m) return;
     const heights = heightCache.get(m);
     if (heights && map.getLayer('odseki-fill')) {
         map.setPaintProperty('odseki-fill', 'fill-extrusion-height',
@@ -893,9 +928,9 @@ async function applyMonthColor() {
             return;
         }
     }
-    if (map.getLayer('odseki-fill')) {
-        map.setPaintProperty('odseki-fill', 'fill-extrusion-color', buildHeatmapExpression(buckets));
-    }
+    const odsekColorExpr = buildHeatmapExpression(buckets);
+    if (map.getLayer('odseki-fill'))      map.setPaintProperty('odseki-fill',      'fill-extrusion-color', odsekColorExpr);
+    if (map.getLayer('odseki-fill-flat')) map.setPaintProperty('odseki-fill-flat', 'fill-color',           odsekColorExpr);
     if (selectedOdsekId) {
         fetchAndShowHeatmapValue(selectedOdsekId, m, selectedGgoName()).catch(() => {});
     }
@@ -925,7 +960,8 @@ async function applyMonthColor() {
             args.push(id, HEATMAP_COLORS[bucket] ?? HEATMAP_COLORS[0]);
         }
         args.push(HEATMAP_COLORS[0]);
-        map.setPaintProperty('gge-fill', 'fill-extrusion-color', args);
+        if (map.getLayer('gge-fill'))      map.setPaintProperty('gge-fill',      'fill-extrusion-color', args);
+        if (map.getLayer('gge-fill-flat')) map.setPaintProperty('gge-fill-flat', 'fill-color',           args);
     }
 
     // Fetch and cache height data, then apply if in 3D mode
@@ -1511,7 +1547,10 @@ function clearHighlight() {
     ++_highlightReqId;
     _applyFilter(NEVER_MATCH);
     clearGgeHighlight();
-    selectedOdsekId = '';
+    selectedOdsekId       = '';
+    _selectedOdsekGgoName = '';
+    _selectedOdsekGgoKey  = 'ggo_naziv';
+    _updateZoomVisibility(map.getZoom());
     heatmapInfoEl.classList.add('hidden');
     selectedOdsekEl.textContent = 'Ni izbranega odseka.';
     detailsEl.classList.add('empty');
@@ -1543,6 +1582,11 @@ function resetPanel() {
 function setHighlight(odsekId, ggoName) {
     if (!odsekId) { clearHighlight(); return; }
     const reqId = ++_highlightReqId;
+    // selectedOdsekId is already set. Clear the GGO refinement — tryRefine will set the exact
+    // tile value once tiles load. Until then the 3D filter uses odsek ID only (safe fallback).
+    _selectedOdsekGgoName = '';
+    _selectedOdsekGgoKey  = 'ggo_naziv';
+    _updateZoomVisibility(map.getZoom());
 
     const odsekFilter = ['==', ['to-string', ['get', 'odsek']], String(odsekId)];
 
@@ -1580,6 +1624,10 @@ function setHighlight(odsekId, ggoName) {
                     ['==', ['to-string', ['get', 'odsek']], String(hit.properties.odsek)],
                     ['==', ['to-string', ['get', key]],     String(hit.properties[key])]
                 ]);
+                // Refine the 3D extrusion filter to the exact tile values — same two-phase approach.
+                _selectedOdsekGgoName = String(hit.properties[key] ?? '');
+                _selectedOdsekGgoKey  = key;
+                _updateZoomVisibility(map.getZoom());
                 return true; // done
             }
         }
@@ -1792,13 +1840,29 @@ map.on('load', () => {
 function _updateZoomVisibility(targetZoom) {
     const zoom = targetZoom ?? map.getZoom();
     const showGGE = zoom < GGE_TO_ODSEK_ZOOM;
-    if (map.getLayer('gge-fill')) {
-        map.setLayoutProperty('gge-fill', 'visibility', showGGE ? 'visible' : 'none');
-    }
+    // In 3D mode with a single odsek selected: extrusion is filtered to that odsek only,
+    // flat layer stays visible as unobtrusive background for all other odseki.
+    const odsekSingleSelect = _map3dMode && !showGGE && !!selectedOdsekId;
+    if (map.getLayer('gge-fill'))
+        map.setLayoutProperty('gge-fill', 'visibility', _map3dMode && showGGE ? 'visible' : 'none');
+    if (map.getLayer('gge-fill-flat'))
+        map.setLayoutProperty('gge-fill-flat', 'visibility', !_map3dMode && showGGE ? 'visible' : 'none');
     if (map.getLayer('odseki-fill')) {
-        map.setLayoutProperty('odseki-fill',    'visibility', showGGE ? 'none' : 'visible');
-        map.setLayoutProperty('odseki-outline', 'visibility', showGGE ? 'none' : 'visible');
+        map.setLayoutProperty('odseki-fill', 'visibility', _map3dMode && !showGGE ? 'visible' : 'none');
+        if (odsekSingleSelect) {
+            const odsekF = ['==', ['to-string', ['get', 'odsek']], String(selectedOdsekId)];
+            map.setFilter('odseki-fill', _selectedOdsekGgoName
+                ? ['all', odsekF, ['==', ['to-string', ['get', _selectedOdsekGgoKey]], String(_selectedOdsekGgoName)]]
+                : odsekF);
+        } else {
+            map.setFilter('odseki-fill', null);
+        }
     }
+    if (map.getLayer('odseki-fill-flat'))
+        map.setLayoutProperty('odseki-fill-flat', 'visibility',
+            !showGGE && (!_map3dMode || odsekSingleSelect) ? 'visible' : 'none');
+    if (map.getLayer('odseki-outline'))
+        map.setLayoutProperty('odseki-outline', 'visibility', showGGE ? 'none' : 'visible');
 }
 
 map.on('zoomend', () => _updateZoomVisibility());
@@ -1830,7 +1894,7 @@ monthSlider.addEventListener('change', () => {
     applyMonthColor().catch(console.error);
 });
 
-map.on('click', 'gge-fill', (event) => {
+function _onGgeFillClick(event) {
     const feature = event.features?.[0];
     if (!feature) return;
     const ggeName = String(feature?.properties?.gge_naziv || '').trim();
@@ -1896,9 +1960,11 @@ map.on('click', 'gge-fill', (event) => {
     _updateZoomVisibility(targetZoom);
     prefetchOdsekiTiles(bbox, Math.floor(targetZoom));
     map.flyTo({ center: cam?.center ?? [(bbox[0]+bbox[2])/2, (bbox[1]+bbox[3])/2], zoom: targetZoom, duration: ANIM.manual });
-});
+}
+map.on('click', 'gge-fill',      _onGgeFillClick);
+map.on('click', 'gge-fill-flat', _onGgeFillClick);
 
-map.on('click', 'odseki-fill', (event) => {
+function _onOdsekiFillClick(event) {
     const feature = event.features?.[0];
     const props = feature?.properties || {};
     if (!props.odsek) return;
@@ -1982,18 +2048,19 @@ map.on('click', 'odseki-fill', (event) => {
             }
         }
     });
-});
+}
+map.on('click', 'odseki-fill',      _onOdsekiFillClick);
+map.on('click', 'odseki-fill-flat', _onOdsekiFillClick);
 
-map.on('mouseenter', 'gge-fill', () => { map.getCanvas().style.cursor = 'pointer'; });
-map.on('mouseleave', 'gge-fill', () => { map.getCanvas().style.cursor = ''; });
+map.on('mouseenter', 'gge-fill',      () => { map.getCanvas().style.cursor = 'pointer'; });
+map.on('mouseleave', 'gge-fill',      () => { map.getCanvas().style.cursor = ''; });
+map.on('mouseenter', 'gge-fill-flat', () => { map.getCanvas().style.cursor = 'pointer'; });
+map.on('mouseleave', 'gge-fill-flat', () => { map.getCanvas().style.cursor = ''; });
 
-map.on('mouseenter', 'odseki-fill', () => {
-    map.getCanvas().style.cursor = 'pointer';
-});
-
-map.on('mouseleave', 'odseki-fill', () => {
-    map.getCanvas().style.cursor = '';
-});
+map.on('mouseenter', 'odseki-fill',      () => { map.getCanvas().style.cursor = 'pointer'; });
+map.on('mouseleave', 'odseki-fill',      () => { map.getCanvas().style.cursor = ''; });
+map.on('mouseenter', 'odseki-fill-flat', () => { map.getCanvas().style.cursor = 'pointer'; });
+map.on('mouseleave', 'odseki-fill-flat', () => { map.getCanvas().style.cursor = ''; });
 
 setSearchEnabled(false);
 fetchGgoOptions();
