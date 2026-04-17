@@ -1096,10 +1096,17 @@ class TileHandler(BaseHTTPRequestHandler):
 
     def _send_json(self, status_code, payload):
         body = json.dumps(payload, ensure_ascii=False).encode('utf-8')
+        if len(body) > 512 and 'gzip' in self.headers.get('Accept-Encoding', ''):
+            body = _gzip.compress(body, compresslevel=1)
+            encoding = 'gzip'
+        else:
+            encoding = None
         self.send_response(status_code)
         self.send_header('Content-Type', 'application/json; charset=utf-8')
         self.send_header('Content-Length', str(len(body)))
         self.send_header('Access-Control-Allow-Origin', '*')
+        if encoding:
+            self.send_header('Content-Encoding', encoding)
         self.end_headers()
         self.wfile.write(body)
 
