@@ -1461,21 +1461,21 @@ function setHighlight(odsekId, ggoName) {
 
     if (!ggoName) return;
 
-    // Step 2 — after idle, query loaded tiles to get the exact stored field values
-    // (GGO name in tiles may differ slightly from the dropdown value).
-    // Only refines the filter; never weakens it to odsek-only.
+    // Step 2 — refine with exact tile-stored values as soon as the relevant tile loads,
+    // which can happen mid-animation. Uses sourcedata for early detection, with idle
+    // as a fallback. Never weakens the filter — GGO constraint is always preserved.
     const canonical = String(odsekId).trim().replace(/ /g, '0');
     const normGgo   = normalize(ggoName);
 
-    map.once('idle', () => {
-        if (reqId !== _highlightReqId) return;
+    function tryRefine() {
+        if (reqId !== _highlightReqId) return true; // superseded — stop
 
         const features = map.querySourceFeatures('odseki', { sourceLayer: 'odseki_map_ggo_gge' });
         const candidates = features.filter(f => {
             const tileOdsek = String(f.properties?.odsek ?? '').trim();
             return tileOdsek.replace(/ /g, '0') === canonical;
         });
-        if (!candidates.length) return; // tiles not yet loaded — keep Step 1 filter
+        if (!candidates.length) return false; // not yet loaded
 
         for (const key of ['ggo_naziv', 'ggo_name']) {
             const hit = candidates.find(
@@ -1486,10 +1486,22 @@ function setHighlight(odsekId, ggoName) {
                     ['==', ['to-string', ['get', 'odsek']], String(hit.properties.odsek)],
                     ['==', ['to-string', ['get', key]],     String(hit.properties[key])]
                 ]);
-                return;
+                return true; // done
             }
         }
-        // No exact tile match found — Step 1 GGO-constrained filter remains active.
+        return false; // candidates found but no GGO match yet — keep Step 1 filter
+    }
+
+    const onSourceData = (e) => {
+        if (e.sourceId !== 'odseki' || !e.isSourceLoaded) return;
+        if (tryRefine()) map.off('sourcedata', onSourceData);
+    };
+    map.on('sourcedata', onSourceData);
+
+    // Fallback: clean up listener after idle regardless.
+    map.once('idle', () => {
+        map.off('sourcedata', onSourceData);
+        tryRefine();
     });
 }
 
