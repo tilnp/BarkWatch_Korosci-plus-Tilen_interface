@@ -228,6 +228,18 @@ const map = new maplibregl.Map({
                 }
             },
             {
+                id: 'ggo-selected-outline',
+                type: 'line',
+                source: 'ggo',
+                'source-layer': 'ggo_maps',
+                filter: ['==', ['literal', false], true],
+                paint: {
+                    'line-color': '#fbbf24',
+                    'line-width': 3.5,
+                    'line-opacity': 1
+                }
+            },
+            {
                 id: 'odseki-selected-fill',
                 type: 'fill',
                 source: 'odseki',
@@ -359,6 +371,7 @@ function _restoreSnap(s) {
     if (s.odsekId) {
         if (s.ggoName) ggoSelect.value = s.ggoName;
         setSearchEnabled(Boolean(s.ggoName));
+        setGgoHighlight(s.ggoName || null);
         selectOdsek(s.odsekId, 'history', s.ggoName || null, { bearing: s.bearing, pitch: s.pitch })
             .catch(console.error)
             .finally(() => {
@@ -371,6 +384,7 @@ function _restoreSnap(s) {
             clearHighlight();
             if (s.ggeName) setGgeHighlight(s.ggeGgoName || null, s.ggeName);
             if (!s.ggoName) ggoSelect.value = '';
+            setGgoHighlight(s.ggoName || null);
         });
     }
 }
@@ -1598,6 +1612,19 @@ function clearGgeHighlight() {
     setGgeHighlight(null, null);
 }
 
+const _GGO_NEVER_MATCH = ['==', ['literal', false], true];
+
+function setGgoHighlight(ggoName) {
+    const filter = ggoName
+        ? ['==', ['get', 'ggo_naziv'], ggoName]
+        : _GGO_NEVER_MATCH;
+    if (map.getLayer('ggo-selected-outline')) map.setFilter('ggo-selected-outline', filter);
+}
+
+function clearGgoHighlight() {
+    setGgoHighlight(null);
+}
+
 /** Clear the highlight layers and side-panel odsek info. */
 function clearHighlight() {
     ++_highlightReqId;
@@ -1617,6 +1644,7 @@ function clearHighlight() {
 /** Reset the full left panel: GGO dropdown, search field, and odsek info. */
 function resetPanel() {
     clearHighlight();
+    clearGgoHighlight();
     ggoSelect.value = '';
     setSearchEnabled(false);
     selectedOdsekEl.textContent = 'Ni izbranega odseka.';
@@ -1810,6 +1838,7 @@ ggoSelect.addEventListener('change', () => {
     searchInput.value = '';
     suggestionsEl.innerHTML = '';
     clearHighlight();
+    setGgoHighlight(selectedGgoName() || null);
 
     if (enabled) {
         selectedOdsekEl.textContent = `Izbran GGO: ${selectedGgoName()}`;
@@ -2001,6 +2030,7 @@ function _onGgeFillClick(event) {
     if (ggoName && ggoCodeByName.has(ggoName)) {
         ggoSelect.value = ggoName;
         setSearchEnabled(true);
+        setGgoHighlight(ggoName);
         selectedOdsekEl.textContent = `Izbran GGO: ${ggoName}`;
         detailsEl.classList.add('empty');
         detailsEl.textContent = 'Izberite odsek.';
