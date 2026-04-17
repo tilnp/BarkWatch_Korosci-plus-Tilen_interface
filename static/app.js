@@ -6,7 +6,7 @@ const INITIAL_ZOOM = 8;
 const GGE_TO_ODSEK_ZOOM = 11;
 
 // Maximum number of map-position history entries for back/forward navigation.
-const MAX_HISTORY = 20;
+const MAX_HISTORY = 30;
 
 // Animation speed preset. Choose one: ANIM_SLOW, ANIM_NORMAL, ANIM_FAST
 const ANIM_SLOW   = { reset:  3600, panel:  3900, manual:  1700, sweep:  640, pitch: 2800 };
@@ -234,13 +234,13 @@ map.addControl({
         const btn = document.createElement('button');
         btn.className = 'map-ctrl-btn';
         btn.style.cursor = 'grab';
-        const update = () => {
-            const p = Math.round(map.getPitch());
+        const update = (targetPitch) => {
+            const p = targetPitch ?? Math.round(map.getPitch());
             btn.title = p > 1 ? `Kot pogleda: ${p}°` : 'Povleci za 3D pogled';
             btn.innerHTML = p > 1 ? '3D' : '2D';
         };
         update();
-        map.on('pitch', update);
+        map.on('pitch', () => update());
 
         let startY = null;
         let startPitch = null;
@@ -261,7 +261,11 @@ map.addControl({
             };
             const onUp = () => {
                 map.dragPan.enable();
-                if (!dragged) map.easeTo({ pitch: map.getPitch() > 1 ? 0 : 60, duration: ANIM.panel });
+                if (!dragged) {
+                    const target = map.getPitch() > 1 ? 0 : 60;
+                    update(target);
+                    map.easeTo({ pitch: target, duration: ANIM.pitch });
+                }
                 window.removeEventListener('mousemove', onMove);
                 window.removeEventListener('mouseup', onUp);
             };
