@@ -1450,50 +1450,46 @@ function setHighlight(odsekId, ggoName) {
     if (!odsekId) { clearHighlight(); return; }
     const reqId = ++_highlightReqId;
 
-    // Step 1 — apply an odsek-only filter immediately so the highlight appears
-    // as soon as any tile with this odsek loads, regardless of GGO.
     const odsekFilter = ['==', ['to-string', ['get', 'odsek']], String(odsekId)];
-    _applyFilter(odsekFilter);
+
+    // Step 1 — immediate filter always includes GGO when known, so odseki with
+    // the same code in other GGOs are never highlighted even before tiles load.
+    const immediateFilter = ggoName
+        ? ['all', odsekFilter, ['==', ['to-string', ['get', 'ggo_naziv']], String(ggoName)]]
+        : odsekFilter;
+    _applyFilter(immediateFilter);
 
     if (!ggoName) return;
 
-    // Step 2 — after the map finishes the fly-to animation and tiles are loaded,
-    // probe the actual tile features to find the exact stored field values.
-    // We use canonical comparison (spaces→zeros) when searching so that IDs
-    // like '10002' and '10  2' are treated as the same odsek, then narrow
-    // the filter to the correct GGO using the tile's own field values.
+    // Step 2 — after idle, query loaded tiles to get the exact stored field values
+    // (GGO name in tiles may differ slightly from the dropdown value).
+    // Only refines the filter; never weakens it to odsek-only.
     const canonical = String(odsekId).trim().replace(/ /g, '0');
+    const normGgo   = normalize(ggoName);
 
     map.once('idle', () => {
-        if (reqId !== _highlightReqId) return; // newer selection superseded this one
+        if (reqId !== _highlightReqId) return;
 
         const features = map.querySourceFeatures('odseki', { sourceLayer: 'odseki_map_ggo_gge' });
-
-        // Match by canonical odsek ID so both '10002' and '10  2' resolve correctly.
         const candidates = features.filter(f => {
             const tileOdsek = String(f.properties?.odsek ?? '').trim();
             return tileOdsek.replace(/ /g, '0') === canonical;
         });
-        if (!candidates.length) return; // tiles not yet loaded — keep odsek-only filter
+        if (!candidates.length) return; // tiles not yet loaded — keep Step 1 filter
 
-        // Find the candidate whose GGO matches the requested GGO.
-        const normGgo = normalize(ggoName);
         for (const key of ['ggo_naziv', 'ggo_name']) {
             const hit = candidates.find(
                 f => normalize(String(f.properties?.[key] ?? '')) === normGgo
             );
             if (hit) {
-                // Use the tile's exact stored values to build the filter.
-                const tileOdsekVal = String(hit.properties.odsek);
-                const tileGgoVal   = String(hit.properties[key]);
                 _applyFilter(['all',
-                    ['==', ['to-string', ['get', 'odsek']], tileOdsekVal],
-                    ['==', ['to-string', ['get', key]],     tileGgoVal]
+                    ['==', ['to-string', ['get', 'odsek']], String(hit.properties.odsek)],
+                    ['==', ['to-string', ['get', key]],     String(hit.properties[key])]
                 ]);
                 return;
             }
         }
-        // GGO field not found in loaded tiles — keep the odsek-only filter.
+        // No exact tile match found — Step 1 GGO-constrained filter remains active.
     });
 }
 
@@ -1611,6 +1607,7 @@ ggoSelect.addEventListener('change', () => {
 searchInput.addEventListener('input', () => {
     const ggoName = selectedGgoName();
     const query = searchInput.value.trim();
+    suggestionsEl.querySelectorAll('.suggestion-item.active').forEach(el => el.classList.remove('active'));
     if (!ggoName || query.length < 1) {
         renderSuggestions([]);
         return;
