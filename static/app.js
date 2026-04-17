@@ -691,7 +691,7 @@ const suggestionsEl = document.getElementById('suggestions');
 const selectedOdsekEl   = document.getElementById('selected-odsek');
 const detailsEl         = document.getElementById('odsek-details');
 const deselectOdsekBtn  = document.getElementById('deselect-odsek-btn');
-deselectOdsekBtn.addEventListener('click', () => clearHighlight());
+deselectOdsekBtn.addEventListener('click', () => resetPanel());
 function _updateDeselectBtn() {
     deselectOdsekBtn.classList.toggle('hidden', !selectedOdsekId);
 }
@@ -789,6 +789,7 @@ let _selectedOdsekGgoKey  = 'ggo_naziv';
 let suggestionsRequestCounter = 0;
 const ggoCodeByName = new Map();
 const ggoNameByCode = new Map(); // reverse: normalised code → ggo_naziv
+const ggoBboxByName = new Map(); // ggo_naziv → [W, S, E, N]
 
 function normalize(v) {
     return String(v ?? '').trim();
@@ -1511,6 +1512,7 @@ async function fetchGgoOptions() {
 
     ggoCodeByName.clear();
     ggoNameByCode.clear();
+    ggoBboxByName.clear();
     for (const item of options) {
         const name = String(item.ggo_naziv || '').trim();
         const code = String(item.ggo_code || '').trim();
@@ -1518,6 +1520,7 @@ async function fetchGgoOptions() {
 
         ggoCodeByName.set(name, code);
         if (code) ggoNameByCode.set(normalizeCode(code), name);
+        if (item.bbox) ggoBboxByName.set(name, item.bbox);
         const option = document.createElement('option');
         option.value = name;
         option.textContent = name;
@@ -1860,9 +1863,7 @@ searchInput.addEventListener('keydown', (event) => {
                 console.error('selectOdsek failed', err);
             });
         } else {
-            selectOdsek(searchInput.value, 'manual').catch((err) => {
-                console.error('selectOdsek failed', err);
-            });
+            _doSearch(searchInput.value);
         }
         return;
     }
@@ -1872,11 +1873,25 @@ searchInput.addEventListener('keydown', (event) => {
     }
 });
 
-searchBtn.addEventListener('click', () => {
-    selectOdsek(searchInput.value, 'manual').catch((err) => {
+function zoomToGgo(ggoName) {
+    const bbox = ggoBboxByName.get(ggoName);
+    if (!bbox) return;
+    const cam = map.cameraForBounds([[bbox[0], bbox[1]], [bbox[2], bbox[3]]], { padding: 70 });
+    if (!cam) return;
+    map.flyTo({ center: cam.center, zoom: cam.zoom, duration: ANIM.manual });
+}
+
+function _doSearch(query) {
+    if (!query.trim() && selectedGgoName()) {
+        zoomToGgo(selectedGgoName());
+        return;
+    }
+    selectOdsek(query, 'manual').catch((err) => {
         console.error('selectOdsek failed', err);
     });
-});
+}
+
+searchBtn.addEventListener('click', () => _doSearch(searchInput.value));
 
 suggestionsEl.addEventListener('click', (event) => {
     const button = event.target.closest('.suggestion-item');

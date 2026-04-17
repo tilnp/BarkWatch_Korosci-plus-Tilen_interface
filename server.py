@@ -1616,10 +1616,20 @@ def main():
     # Use the actual tile odsek ID (bbox[4]) so suggestions exactly match what the tile stores,
     # and the MapLibre highlight filter can match without any conversion.
     by_ggo = defaultdict(list)
+    ggo_bbox_accum = defaultdict(lambda: [float('inf'), float('inf'), float('-inf'), float('-inf')])
     for (ggo_naziv, _), bbox_val in ODSEK_BBOX.items():
         tile_id = bbox_val[4]
         by_ggo[ggo_naziv].append(tile_id)
+        b = ggo_bbox_accum[ggo_naziv]
+        b[0] = min(b[0], bbox_val[0])  # W
+        b[1] = min(b[1], bbox_val[1])  # S
+        b[2] = max(b[2], bbox_val[2])  # E
+        b[3] = max(b[3], bbox_val[3])  # N
     ODSEKI_BY_GGO = {ggo: sorted(ids, key=_odsek_sort_key) for ggo, ids in by_ggo.items()}
+    for opt in GGO_OPTIONS:
+        b = ggo_bbox_accum.get(opt['ggo_naziv'])
+        if b and b[0] != float('inf'):
+            opt['bbox'] = [round(v, 6) for v in b]
     print(f"Suggestion index: {sum(len(v) for v in ODSEKI_BY_GGO.values()):,} segments across {len(ODSEKI_BY_GGO)} GGO")
 
     print(f"Serving static files from {STATIC_DIR}")
