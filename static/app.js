@@ -6,9 +6,9 @@ const INITIAL_ZOOM = 8;
 const GGE_TO_ODSEK_ZOOM = 11;
 
 // Animation speed preset. Choose one: ANIM_SLOW, ANIM_NORMAL, ANIM_FAST
-const ANIM_SLOW   = { reset:  3600, panel:  3900, manual:  1700, sweep:  640 };
-const ANIM_NORMAL   = { reset: 1800, panel: 2800, manual: 1200, sweep: 450 };
-const ANIM_FAST = { reset:  900, panel: 1700, manual:  700, sweep: 260 };
+const ANIM_SLOW   = { reset:  3600, panel:  3900, manual:  1700, sweep:  640, pitch: 2800 };
+const ANIM_NORMAL   = { reset: 1800, panel: 2800, manual: 1200, sweep: 450, pitch: 1500 };
+const ANIM_FAST = { reset:  900, panel: 1700, manual:  700, sweep: 260, pitch: 700 };
 
 let ANIM = ANIM_NORMAL;
 
@@ -216,11 +216,61 @@ const map = new maplibregl.Map({
     center: SLOVENIA_CENTER,
     zoom: INITIAL_ZOOM,
     minZoom: INITIAL_ZOOM,
-    maxZoom: 16
+    maxZoom: 16,
+    maxPitch: 70
 });
 
 map.addControl(new maplibregl.NavigationControl(), 'top-right');
 map.addControl(new maplibregl.ScaleControl({ maxWidth: 120, unit: 'metric' }), 'bottom-right');
+
+// Pitch (3D tilt) control — drag up/down to adjust angle, click to reset to 2D
+map.addControl({
+    onAdd() {
+        this._container = document.createElement('div');
+        this._container.className = 'maplibregl-ctrl maplibregl-ctrl-group';
+        const btn = document.createElement('button');
+        btn.className = 'map-ctrl-btn';
+        btn.style.cursor = 'grab';
+        const update = () => {
+            const p = Math.round(map.getPitch());
+            btn.title = p > 1 ? `Kot pogleda: ${p}°` : 'Povleci za 3D pogled';
+            btn.innerHTML = p > 1 ? '3D' : '2D';
+        };
+        update();
+        map.on('pitch', update);
+
+        let startY = null;
+        let startPitch = null;
+        let dragged = false;
+
+        btn.addEventListener('mousedown', (e) => {
+            e.preventDefault();
+            startY = e.clientY;
+            startPitch = map.getPitch();
+            dragged = false;
+            map.dragPan.disable();
+
+            const onMove = (e) => {
+                const delta = startY - e.clientY;
+                if (Math.abs(delta) > 3) dragged = true;
+                const pitch = Math.max(0, Math.min(85, startPitch + delta * 0.5));
+                map.setPitch(pitch);
+            };
+            const onUp = () => {
+                map.dragPan.enable();
+                if (!dragged) map.easeTo({ pitch: map.getPitch() > 1 ? 0 : 60, duration: ANIM.panel });
+                window.removeEventListener('mousemove', onMove);
+                window.removeEventListener('mouseup', onUp);
+            };
+            window.addEventListener('mousemove', onMove);
+            window.addEventListener('mouseup', onUp);
+        });
+
+        this._container.appendChild(btn);
+        return this._container;
+    },
+    onRemove() { this._container.parentNode.removeChild(this._container); }
+}, 'top-right');
 
 // Reset-view control (⌂)
 map.addControl({
