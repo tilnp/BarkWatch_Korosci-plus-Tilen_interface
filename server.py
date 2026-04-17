@@ -1566,7 +1566,7 @@ def main():
     print(f"Open http://localhost:{PORT} in your browser")
     print("Press Ctrl+C to stop")
 
-    server = ThreadingHTTPServer(('localhost', PORT), TileHandler)
+    server = ThreadingHTTPServer(('0.0.0.0', PORT), TileHandler)
     server.serve_forever()
 
 if __name__ == '__main__':
