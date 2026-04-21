@@ -2180,3 +2180,37 @@ map.on('mouseleave', 'odseki-fill-flat', () => { map.getCanvas().style.cursor = 
 
 setSearchEnabled(false);
 fetchGgoOptions();
+
+// ── Authors modal ─────────────────────────────────────────────────────────────
+
+const PROJECT_AUTHORS = [
+    'Žan Pustoslemšek',
+    'Lovro Petrič',
+    'Anej Miklavc',
+    'Valentin Gorenšek',
+    'Tilen Pokorn',
+];
+
+const authorsBtn   = document.getElementById('authors-btn');
+const authorsModal = document.getElementById('authors-modal');
+const authorsClose = document.getElementById('authors-close');
+const authorsList  = document.getElementById('authors-list');
+
+function openAuthorsModal() {
+    authorsList.innerHTML = PROJECT_AUTHORS
+        .map(name => `<li>${name}</li>`).join('');
+    authorsModal.classList.remove('hidden');
+}
+
+function closeAuthorsModal() {
+    authorsModal.classList.add('hidden');
+}
+
+authorsBtn.addEventListener('click', openAuthorsModal);
+authorsClose.addEventListener('click', closeAuthorsModal);
+authorsModal.addEventListener('click', e => {
+    if (e.target === authorsModal) closeAuthorsModal();
+});
+document.addEventListener('keydown', e => {
+    if (e.key === 'Escape' && !authorsModal.classList.contains('hidden')) closeAuthorsModal();
+});
