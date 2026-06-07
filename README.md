@@ -24,7 +24,7 @@ Slovenia is one of the most forested countries in Europe (~58% land cover). Bark
 - Switch between real harvest data (m³/ha) and synthetic beetle-density data (beetles/m²)
 - 3D height map in tilted view — height proportional to continuous data values
 - View-history navigation (bearing, pitch, zoom, selected sector)
-- The app has a lot of features, probably not all of them are intentional — some people call those bugs
+- The app has a lot of features, probably not all of them are intentional (e.g. bugs)
 
 <table align="center">
   <tr>
